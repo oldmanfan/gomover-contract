@@ -245,7 +245,7 @@ module ThundindNft::ThundindNft {
     }
 
     // user buy with white list
-    public entry fun white_list_buy_project<CoinType>(
+    public entry fun buy_nft(
         sender: &signer,
         prj_id: u64,
         amount: u64
