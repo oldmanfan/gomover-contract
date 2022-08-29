@@ -25,29 +25,10 @@ module ThundindNft::ThundindNft {
     const ETHUNDIND_PROJECT_PROGRESS_NOT_EXIST: u64 = 10;
     const ETHUNDIND_PROJECT_NOT_WHITE_LIST: u64     = 11;
 
-    const MAX_U128: u128 = 340282366920938463463374607431768211455;
-
-    // life of project
-    const PRJ_STATUS_STARTING: u8     = 0;
-    const PRJ_STATUS_CONFIRMED: u8    = 1;
-    const PRJ_STATUS_PUBLISHED: u8    = 2;
-    const PRJ_STATUS_CLOSED: u8       = 3;
-    // selling progress of project
-    const PRJ_PROGRESS_WHITE_LIST: u8   = 1;
-    const PRJ_PROGRESS_PRIVATE_SELL: u8 = 2;
-    const PRJ_PROGRESS_PUBLIC_SELL: u8  = 3;
 
     struct PrjLaunchEvent has drop, store {
         id: u64,
         amount: u64,
-    }
-
-    struct PrjConfirmEvent has drop, store {
-        id: u64,
-    }
-
-    struct PrjPublishEvent has drop, store {
-        id: u64,
     }
 
     struct PrjBuyEvent has drop, store {
