@@ -1,5 +1,5 @@
 [package]
-name = 'Thundind'
+name = 'Thundind LaunchPad'
 version = '1.0.0'
 [dependencies.AptosFramework]
 git = 'https://github.com/aptos-labs/aptos-core.git'
@@ -11,5 +11,5 @@ std = "0x1"
 aptos_std = "0x1"
 aptos_framework = "0x1"
 ThundindCoin = "0xCAF0"
-ThundindToken = "0xCAF1"
+ThundindNft = "0xCAF1"
 ThundindMarket = "0xCAF2"

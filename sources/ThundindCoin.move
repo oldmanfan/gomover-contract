@@ -1,7 +1,7 @@
 // Copyright (c) Thundind
 // SPDX-License-Identifier: Apache-2.0
 
-module ThundindCoin::LanuchCoin {
+module ThundindCoin::ThundindCoin {
     use std::string::String;
     use std::coin::{Self, Coin};
     use std::signer;
@@ -12,20 +12,20 @@ module ThundindCoin::LanuchCoin {
     use aptos_framework::timestamp;
     use aptos_std::event::{Self, EventHandle};
     use aptos_framework::aptos_coin::AptosCoin;
+    use aptos_framework::managed_coin;
 
-    const ETHUNDIND_ONLY_OWNER: u64 = 0;
-    const ETHUNDIND_ALREADY_INITED: u64 = 1;
-    const ETHUNDIND_PROJECT_STARTED: u64 = 2;
-    const ETHUNDIND_PROJECT_NOT_EXIST: u64 = 3;
-    const ETHUNDIND_PROJECT_COINTYPE_MISMATCH: u64 = 4;
-    const ETHUNDIND_PROJECT_STATUS_ERROR: u64 = 5;
-    const ETHUNDIND_PROJECT_OWNER_MISMATCH: u64 = 6;
-    const ETHUNDIND_PROJECT_PROGRESS_UNKNOWN: u64 = 7;
-
-    const ETHUNDIND_PROJECT_AMOUNT_OVER_BOUND: u64 = 8;
+    const ETHUNDIND_ONLY_OWNER: u64                 = 0;
+    const ETHUNDIND_ALREADY_INITED: u64             = 1;
+    const ETHUNDIND_PROJECT_STARTED: u64            = 2;
+    const ETHUNDIND_PROJECT_NOT_EXIST: u64          = 3;
+    const ETHUNDIND_PROJECT_COINTYPE_MISMATCH: u64  = 4;
+    const ETHUNDIND_PROJECT_STATUS_ERROR: u64       = 5;
+    const ETHUNDIND_PROJECT_OWNER_MISMATCH: u64     = 6;
+    const ETHUNDIND_PROJECT_PROGRESS_UNKNOWN: u64   = 7;
+    const ETHUNDIND_PROJECT_AMOUNT_OVER_BOUND: u64  = 8;
     const ETHUNDIND_PROJECT_PROGRESS_TIME_OVER: u64 = 9;
     const ETHUNDIND_PROJECT_PROGRESS_NOT_EXIST: u64 = 10;
-    const ETHUNDIND_PROJECT_NOT_WHITE_LIST: u64 = 11;
+    const ETHUNDIND_PROJECT_NOT_WHITE_LIST: u64     = 11;
 
     const MAX_U128: u128 = 340282366920938463463374607431768211455;
 
@@ -356,6 +356,12 @@ module ThundindCoin::LanuchCoin {
         v
     }
 
+    public fun register_coin_if_need<CoinType>(sender: &signer) {
+        if (coin::is_account_registered<CoinType>(signer::address_of(sender))) return;
+
+        managed_coin::register<CoinType>(sender);
+    }
+
     public fun exchange_coins<CoinType>(
         sender: &signer,
         amount: u64,
@@ -366,6 +372,8 @@ module ThundindCoin::LanuchCoin {
     {
         let decimal = coin::decimals<CoinType>();
         let aptos_amount = amount * price / pow(10, (decimal as u64));
+
+        register_coin_if_need<CoinType>(sender);
 
         coin::transfer<AptosCoin>(sender, receiver, aptos_amount);
 
@@ -421,7 +429,7 @@ module ThundindCoin::LanuchCoin {
     )
         acquires AllProjects, CoinEscrowed
     {
-         let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
+        let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
         assert!(
             table::contains(&allPrjs.projects, prjId),
             error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
@@ -463,7 +471,7 @@ module ThundindCoin::LanuchCoin {
     )
         acquires AllProjects, CoinEscrowed
     {
-         let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
+        let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
         assert!(
             table::contains(&allPrjs.projects, prjId),
             error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
@@ -500,7 +508,7 @@ module ThundindCoin::LanuchCoin {
     )
         acquires AllProjects, CoinEscrowed
     {
-         let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
+        let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
         assert!(
             table::contains(&allPrjs.projects, prjId),
             error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
