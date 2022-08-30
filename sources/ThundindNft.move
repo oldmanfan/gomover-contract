@@ -37,7 +37,7 @@ module ThundindNft::ThundindNft {
         price: u64,
     }
 
-    struct Progress has store {
+    struct Stage has store {
         sell_amount: u64,     // want sell amount
         sold_amount: u64,     // real sold amount
         price: u64,           // 1 Token for xx Aptos
@@ -52,9 +52,9 @@ module ThundindNft::ThundindNft {
         prj_description: String,      // details of project
         total_presell_amount: u64, // total amount for launch
 
-        white_list_progress: Progress,     // starting, published.....
-        private_sell_progress: Progress,     // starting, published.....
-        public_sell_progress: Progress,     // starting, published.....
+        white_list_stage: Stage,     // starting, published.....
+        private_sell_stage: Stage,     // starting, published.....
+        public_sell_stage: Stage,     // starting, published.....
 
         white_list: vector<address>,        // white list
         buyer_list: vector<address>,        // all buyers
@@ -78,8 +78,8 @@ module ThundindNft::ThundindNft {
         owner
     }
 
-    fun empty_progress(amount: u64, price: u64, start: u64, end: u64): Progress {
-        Progress {
+    fun make_stage(amount: u64, price: u64, start: u64, end: u64): Stage {
+        Stage {
             sell_amount: amount,
             sold_amount: 0,
             price,
@@ -89,10 +89,10 @@ module ThundindNft::ThundindNft {
     }
 
     public entry fun init_system(sender: &signer) {
-        let owner = only_owner(sender);
+        only_owner(sender);
 
         assert!(
-            !exists<AllProjects>(owner),
+            !exists<AllProjects>(@ThundindNft),
             error::already_exists(ETHUNDIND_ALREADY_INITED),
         );
 
@@ -130,9 +130,9 @@ module ThundindNft::ThundindNft {
             prj_description: description,
             total_presell_amount,
 
-            white_list_progress:   empty_progress(wl_amount, wl_price, wl_start, wl_end),     // white list progress
-            private_sell_progress: empty_progress(pv_amount, pv_price, pv_start, pv_end),     // private sell progress
-            public_sell_progress:  empty_progress(pb_amount, pb_price, pb_start, pb_end),     // public sell progress
+            white_list_stage:   make_stage(wl_amount, wl_price, wl_start, wl_end),     // white list progress
+            private_sell_stage: make_stage(pv_amount, pv_price, pv_start, pv_end),     // private sell progress
+            public_sell_stage:  make_stage(pb_amount, pb_price, pb_start, pb_end),     // public sell progress
 
             white_list: vector::empty(),        // white list
             buyer_list: vector::empty(),        // all buyers
@@ -184,45 +184,45 @@ module ThundindNft::ThundindNft {
     ): bool
     {
         let now = timestamp::now_seconds();
-        let is_wl_progress: bool = false;
-        let progress: &mut Progress;
+        let is_wl_stage: bool = false;
+        let stage: &mut Stage;
 
-        if (prj.private_sell_progress.start_time <= now && now < prj.private_sell_progress.end_time) {
-            progress = &mut prj.private_sell_progress;
-        } else if (prj.public_sell_progress.start_time <= now && now < prj.public_sell_progress.end_time) {
-            progress = &mut prj.public_sell_progress;
-        } else if (prj.white_list_progress.start_time <= now && now < prj.white_list_progress.end_time) {
-            progress = &mut prj.white_list_progress;
-            is_wl_progress = true;
+        if (prj.private_sell_stage.start_time <= now && now < prj.private_sell_stage.end_time) {
+            stage = &mut prj.private_sell_stage;
+        } else if (prj.public_sell_stage.start_time <= now && now < prj.public_sell_stage.end_time) {
+            stage = &mut prj.public_sell_stage;
+        } else if (prj.white_list_stage.start_time <= now && now < prj.white_list_stage.end_time) {
+            stage = &mut prj.white_list_stage;
+            is_wl_stage = true;
         } else {
             assert!(
                 false,
                 error::invalid_argument(ETHUNDIND_PROJECT_PROGRESS_UNKNOWN)
             );
             // FIXME: how to avoid "may be uninitialized" compiling error??
-            progress = &mut prj.white_list_progress;
+            stage = &mut prj.white_list_stage;
         };
 
         assert!(
-            progress.sold_amount + amount <= progress.sell_amount,
+            stage.sold_amount + amount <= stage.sell_amount,
             error::invalid_argument(ETHUNDIND_PROJECT_AMOUNT_OVER_BOUND)
         );
 
-        progress.sold_amount = progress.sold_amount + amount;
+        stage.sold_amount = stage.sold_amount + amount;
 
-        let totalAptos = progress.price * amount;
+        let totalAptos = stage.price * amount;
         coin::transfer<AptosCoin>(sender, prj.prj_owner, totalAptos);
 
         event::emit_event<PrjBuyEvent>(
             &mut prj.buy_events,
             PrjBuyEvent {
                 buyer: signer::address_of(sender),
-                price: progress.price,
+                price: stage.price,
                 buy_amount: amount
             }
         );
 
-        is_wl_progress
+        is_wl_stage
     }
 
     // user buy with white list
@@ -242,13 +242,15 @@ module ThundindNft::ThundindNft {
 
         let prj = table::borrow_mut(&mut allPrjs.projects, prj_id);
         let is_wl = do_exchange_nft_aptos(sender, prj, amount);
+        let buyer = signer::address_of(sender);
         if (is_wl) {
-            let buyer = signer::address_of(sender);
             assert!(
                 vector::contains(&prj.white_list, &buyer),
                 error::invalid_argument(ETHUNDIND_PROJECT_NOT_WHITE_LIST)
             );
         };
+
+        vector::push_back<address>(&mut prj.buyer_list, buyer);
     }
 
 }

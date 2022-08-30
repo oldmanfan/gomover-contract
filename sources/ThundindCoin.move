@@ -44,24 +44,13 @@ module ThundindCoin::ThundindCoin {
         amount: u64,
     }
 
-    struct PrjConfirmEvent has drop, store {
-        id: u64,
-    }
-
-    struct PrjPublishEvent has drop, store {
-        id: u64,
-    }
-
     struct PrjBuyEvent has drop, store {
-        id: u64,
         buyer: address,
-        progress_index: u8,
         buy_amount: u64,
         price: u64,
     }
 
-    struct Progress has store {
-        typ: u8,
+    struct Stage has store {
         sell_amount: u64,     // want sell amount
         sold_amount: u64,     // real sold amount
         price: u64,           // 1 Token for xx Aptos
@@ -71,31 +60,31 @@ module ThundindCoin::ThundindCoin {
 
     struct Project has store {
         id: u64,                  // project id
-        launched_by: address,     // project launched by
+        owner: address,     // project launched by
         name: String,             // project name
         description: String,      // details of project
         coin_info: String,
         total_presell_amount: u64, // total amount for launch
-        current_progress: u8,     // starting, published.....
-        progresses: vector<Progress>, // all progresses
-        white_list: vector<address>,
+
+        white_list_stage: Stage,     // starting, published.....
+        private_sell_stage: Stage,     // starting, published.....
+        public_sell_stage: Stage,     // starting, published.....
+
+        white_list: vector<address>,        // white list
+        buyer_list: vector<address>,        // all buyers
+
+        buy_events: EventHandle<PrjBuyEvent>,
     }
 
     struct AllProjects has key {
         projects: Table<u64, Project>,
         launch_events: EventHandle<PrjLaunchEvent>,
-        confirm_events: EventHandle<PrjConfirmEvent>,
-        publish_events: EventHandle<PrjPublishEvent>,
-        buy_events: EventHandle<PrjBuyEvent>,
     }
 
     struct CoinEscrowed<phantom CoinType> has key {
        coin: Coin<CoinType>,
-    }
-
-    struct SystemParameters has key {
-        total_projects: u64,
-        approved_publisher: vector<address>,
+       apt_coin: Coin<AptosCoin>,
+       last_withdraw_time: u64,
     }
 
     fun only_owner(sender: &signer): address {
@@ -109,11 +98,21 @@ module ThundindCoin::ThundindCoin {
         owner
     }
 
+    fun make_stage(amount: u64, price: u64, start: u64, end: u64): Stage {
+        Stage {
+            sell_amount: amount,
+            sold_amount: 0,
+            price,
+            start_time: start,
+            end_time: end,
+        }
+    }
+
     public entry fun init_system(sender: &signer) {
-        let owner = only_owner(sender);
+        only_owner(sender);
 
         assert!(
-            !exists<AllProjects>(owner),
+            !exists<AllProjects>(@ThundindCoin),
             error::already_exists(ETHUNDIND_ALREADY_INITED),
         );
 
@@ -122,22 +121,6 @@ module ThundindCoin::ThundindCoin {
             AllProjects {
                 projects: table::new(),
                 launch_events: event::new_event_handle<PrjLaunchEvent>(sender),
-                confirm_events: event::new_event_handle<PrjConfirmEvent>(sender),
-                publish_events: event::new_event_handle<PrjPublishEvent>(sender),
-                buy_events: event::new_event_handle<PrjBuyEvent>(sender),
-            }
-        );
-
-        assert!(
-            !exists<SystemParameters>(owner),
-            error::already_exists(ETHUNDIND_ALREADY_INITED),
-        );
-
-        move_to(
-            sender,
-            SystemParameters {
-                total_projects: 0,
-                approved_publisher: vector::empty<address>()
             }
         );
     }
@@ -148,105 +131,95 @@ module ThundindCoin::ThundindCoin {
     */
     public entry fun launch_project(
             sender: &signer,
+            id: u64,
+            owner: address,
             name: String,
             description: String,
             coin_info: String,  // to describe the coin info, as: `0x1::FakeCoin::Coin`
-            total_presell_amount: u64
-    ) acquires SystemParameters, AllProjects {
-        let prjId = &mut borrow_global_mut<SystemParameters>(@ThundindCoin).total_projects;
-        *prjId = *prjId + 1;
+            total_presell_amount: u64,
+            wl_amount: u64, wl_price: u64, wl_start: u64, wl_end: u64, // white list params
+            pv_amount: u64, pv_price: u64, pv_start: u64, pv_end: u64, // private sell params
+            pb_amount: u64, pb_price: u64, pb_start: u64, pb_end: u64, // public sell params
+    ) acquires AllProjects {
+
+        only_owner(sender);
+
+        assert!(
+            total_presell_amount == wl_amount + pv_amount + pb_amount,
+            error::invalid_argument(ETHUNDIND_PROJECT_AMOUNT_OVER_BOUND)
+        );
 
         let prj = Project {
-            id: *prjId,
-            launched_by: signer::address_of(sender),
+            id,
+            owner,
             name,
             description,
             coin_info,
             total_presell_amount,
-            current_progress: PRJ_STATUS_STARTING,
-            progresses: vector::empty(),
-            white_list: vector::empty()
+            white_list_stage:   make_stage(wl_amount, wl_price, wl_start, wl_end),     // white list progress
+            private_sell_stage: make_stage(pv_amount, pv_price, pv_start, pv_end),     // private sell progress
+            public_sell_stage:  make_stage(pb_amount, pb_price, pb_start, pb_end),     // public sell progress
+
+            white_list: vector::empty(),        // white list
+            buyer_list: vector::empty(),        // all buyers
+
+            buy_events: event::new_event_handle<PrjBuyEvent>(sender),
         };
 
         let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
 
-        table::add(&mut allPrjs.projects, *prjId, prj);
+        table::add(&mut allPrjs.projects, id, prj);
 
         event::emit_event<PrjLaunchEvent>(
             &mut allPrjs.launch_events,
-            PrjLaunchEvent { id: *prjId, amount: total_presell_amount },
+            PrjLaunchEvent { id, amount: total_presell_amount },
         );
     }
-    /**
-    * comfirm_project
-    *   the launch pad platform should confirm the project launched by `launch_project`
-    */
-    public entry fun confirm_project<CoinType>(
-        sender: &signer,
-        prjId: u64
-    )
-        acquires AllProjects
-    {
-        only_owner(sender);
 
+    public entry fun stake_coin<CoinType>(
+        sender: &signer,
+        prj_id: u64
+    )
+        acquires AllProjects, CoinEscrowed
+    {
         let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
         assert!(
-            table::contains(&allPrjs.projects, prjId),
+            table::contains(&allPrjs.projects, prj_id),
             error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
         );
 
-        let prj = table::borrow_mut(&mut allPrjs.projects, prjId);
+        let prj = table::borrow_mut(&mut allPrjs.projects, prj_id);
         assert!(
             type_info::type_name<CoinType>() == prj.coin_info,
             error::invalid_argument(ETHUNDIND_PROJECT_COINTYPE_MISMATCH),
         );
-
+        let owner = signer::address_of(sender);
         assert!(
-            prj.current_progress == PRJ_STATUS_STARTING,
-            error::invalid_argument(ETHUNDIND_PROJECT_STATUS_ERROR),
+            prj.owner == owner,
+            error::invalid_argument(ETHUNDIND_PROJECT_OWNER_MISMATCH)
         );
 
-        prj.current_progress = PRJ_STATUS_CONFIRMED;
-
-        move_to(
-            sender,
-            CoinEscrowed<CoinType> { coin: coin::zero() }
-        );
-
-        event::emit_event<PrjConfirmEvent>(
-            &mut allPrjs.confirm_events,
-            PrjConfirmEvent { id: prjId },
-        );
-    }
-
-    fun add_progress(prj: &mut Project, typ: u8, amount: u64, price: u64, start: u64, end: u64) {
-        assert!(
-            typ == 1 || typ == 2 || typ == 3,
-            error::invalid_argument(ETHUNDIND_PROJECT_PROGRESS_UNKNOWN)
-        );
-
-        assert!(
-            start < end,
-            error::invalid_argument(ETHUNDIND_PROJECT_PROGRESS_UNKNOWN)
-        );
-
-        let p = Progress {
-            typ,
-            sell_amount: amount,
-            sold_amount: 0,
-            price,
-            start_time: start,
-            end_time: end,
+        if (!exists<CoinEscrowed<CoinType>>(owner)) {
+            move_to(
+                sender,
+                CoinEscrowed {
+                    coin: coin::zero<CoinType>(),
+                    apt_coin: coin::zero<AptosCoin>(),
+                    last_withdraw_time: 0
+                }
+            );
         };
 
-        vector::push_back(&mut prj.progresses, p);
+        let staked_coin = &mut borrow_global_mut<CoinEscrowed<CoinType>>(owner).coin;
+        let staked_amount = coin::withdraw<CoinType>(sender, prj.total_presell_amount);
+        coin::merge<CoinType>(staked_coin, staked_amount);
     }
 
     /**
     * white_list_project
     *   add white list to project by launcher
     */
-    public entry fun white_list_project(
+    public entry fun add_white_list(
         sender: &signer,
         prjId: u64,
         white_list: vector<address>
@@ -262,88 +235,11 @@ module ThundindCoin::ThundindCoin {
         let prj = table::borrow_mut(&mut allPrjs.projects, prjId);
         let account = signer::address_of(sender);
         assert!(
-            prj.launched_by == account,
+            prj.owner == account,
             error::invalid_argument(ETHUNDIND_PROJECT_OWNER_MISMATCH)
         );
 
         vector::append(&mut prj.white_list, white_list);
-    }
-
-    /**
-    * publish_project
-    *   publish this project by launcher
-    */
-    public entry fun publish_project<CoinType>(
-        sender: &signer,
-        prjId: u64,
-        progress_type: vector<u8>,
-        progress_amount: vector<u64>,
-        progress_price: vector<u64>,
-        progress_start: vector<u64>,
-        progress_end:   vector<u64>
-    )
-        acquires AllProjects, CoinEscrowed
-    {
-        let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
-        assert!(
-            table::contains(&allPrjs.projects, prjId),
-            error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
-        );
-
-        let prj = table::borrow_mut(&mut allPrjs.projects, prjId);
-        let account = signer::address_of(sender);
-        assert!(
-            prj.launched_by == account,
-            error::invalid_argument(ETHUNDIND_PROJECT_OWNER_MISMATCH)
-        );
-
-        assert!(
-            type_info::type_name<CoinType>() == prj.coin_info,
-            error::invalid_argument(ETHUNDIND_PROJECT_COINTYPE_MISMATCH),
-        );
-
-        assert!(
-            prj.current_progress == PRJ_STATUS_CONFIRMED,
-            error::invalid_argument(ETHUNDIND_PROJECT_STATUS_ERROR),
-        );
-
-        let len = vector::length(&progress_amount);
-        let i = 0;
-        let total_amount = 0;
-        while ( i < len) {
-            total_amount = total_amount + *vector::borrow(&progress_amount, i);
-            i = i + 1;
-        };
-
-        assert!(
-            prj.total_presell_amount == total_amount,
-            error::invalid_argument(ETHUNDIND_PROJECT_STATUS_ERROR),
-        );
-
-        i = 0;
-        while (i < len) {
-            add_progress(
-                prj,
-                *vector::borrow(&progress_type, i),
-                *vector::borrow(&progress_amount, i),
-                *vector::borrow(&progress_price, i),
-                *vector::borrow(&progress_start, i),
-                *vector::borrow(&progress_end, i),
-            );
-            i = i + 1;
-        };
-
-        prj.current_progress = PRJ_STATUS_PUBLISHED;
-
-        // to stake coin to this project
-        let coin = coin::withdraw<CoinType>(sender, prj.total_presell_amount);
-        let staked_coin = &mut borrow_global_mut<CoinEscrowed<CoinType>>(@ThundindCoin).coin;
-        coin::merge<CoinType>(staked_coin, coin);
-
-        event::emit_event<PrjPublishEvent>(
-            &mut allPrjs.publish_events,
-            PrjPublishEvent { id: prjId },
-        );
     }
 
     fun pow(base: u64, exp: u64): u64 {
@@ -351,78 +247,84 @@ module ThundindCoin::ThundindCoin {
         let v = 1;
         while ( i < exp) {
             v = v * base;
+            i = i + 1;
         };
 
         v
     }
 
-    public fun register_coin_if_need<CoinType>(sender: &signer) {
-        if (coin::is_account_registered<CoinType>(signer::address_of(sender))) return;
-
-        managed_coin::register<CoinType>(sender);
-    }
-
     public fun exchange_coins<CoinType>(
-        sender: &signer,
+        buyer: &signer,
+        prj_owner: address,
         amount: u64,
-        price: u64,
-        receiver: address
+        price: u64
     )
         acquires CoinEscrowed
     {
         let decimal = coin::decimals<CoinType>();
         let aptos_amount = amount * price / pow(10, (decimal as u64));
-
-        register_coin_if_need<CoinType>(sender);
-
-        coin::transfer<AptosCoin>(sender, receiver, aptos_amount);
-
-        let coin = &mut borrow_global_mut<CoinEscrowed<CoinType>>(@ThundindCoin).coin;
-
-        let t = coin::extract<CoinType>(coin, amount);
-        coin::deposit(signer::address_of(sender), t);
+        //
+        if (!coin::is_account_registered<CoinType>(signer::address_of(buyer))) {
+            managed_coin::register<CoinType>(buyer);
+        };
+        let coin_escrowed = borrow_global_mut<CoinEscrowed<CoinType>>(prj_owner);
+        let t = coin::extract<CoinType>(&mut coin_escrowed.coin, amount);
+        coin::deposit(signer::address_of(buyer), t);
+        // escrow AptosCoin to owner storage
+        let paied_apt = coin::withdraw<AptosCoin>(buyer, aptos_amount);
+        coin::merge<AptosCoin>(&mut coin_escrowed.apt_coin, paied_apt);
     }
 
-    public fun update_progress_status(
+    public fun do_buy_coin_with_aptos<CoinType>(
+        sender: &signer,
         prj: &mut Project,
-        progress_index: u8,
         amount: u64
-    ): u64
+    ): bool
+        acquires CoinEscrowed
     {
         let now = timestamp::now_seconds();
-        let len = vector::length(&prj.progresses);
+        let is_wl_stage: bool = false;
+        let stage: &mut Stage;
 
-        let i = 0;
-        let price = 0;
-        while (i < len) {
-            let progress = vector::borrow_mut(&mut prj.progresses, i);
-            if (progress.typ == progress_index) {
-               assert!(
-                 progress.sold_amount + amount <= progress.sell_amount,
-                 error::invalid_argument(ETHUNDIND_PROJECT_AMOUNT_OVER_BOUND)
-               );
-
-               assert!(
-                 progress.start_time <= now && now < progress.end_time,
-                 error::invalid_argument(ETHUNDIND_PROJECT_PROGRESS_TIME_OVER)
-               );
-
-               progress.sold_amount = progress.sold_amount + amount;
-               price = progress.price;
-            };
-            i = i + 1;
+        if (prj.private_sell_stage.start_time <= now && now < prj.private_sell_stage.end_time) {
+            stage = &mut prj.private_sell_stage;
+        } else if (prj.public_sell_stage.start_time <= now && now < prj.public_sell_stage.end_time) {
+            stage = &mut prj.public_sell_stage;
+        } else if (prj.white_list_stage.start_time <= now && now < prj.white_list_stage.end_time) {
+            stage = &mut prj.white_list_stage;
+            is_wl_stage = true;
+        } else {
+            assert!(
+                false,
+                error::invalid_argument(ETHUNDIND_PROJECT_PROGRESS_UNKNOWN)
+            );
+            // FIXME: how to avoid "may be uninitialized" compiling error??
+            stage = &mut prj.white_list_stage;
         };
 
         assert!(
-            i < len,
-            error::invalid_argument(ETHUNDIND_PROJECT_PROGRESS_NOT_EXIST)
+            stage.sold_amount + amount <= stage.sell_amount,
+            error::invalid_argument(ETHUNDIND_PROJECT_AMOUNT_OVER_BOUND)
         );
 
-        price
+        stage.sold_amount = stage.sold_amount + amount;
+
+        exchange_coins<CoinType>(sender, prj.owner, amount, stage.price);
+
+        event::emit_event<PrjBuyEvent>(
+            &mut prj.buy_events,
+            PrjBuyEvent {
+                buyer: signer::address_of(sender),
+                price: stage.price,
+                buy_amount: amount
+            }
+        );
+
+        is_wl_stage
     }
 
-    // user buy with white list
-    public entry fun white_list_buy_project<CoinType>(
+    // user buy coin
+    public entry fun buy_coin<CoinType>(
         sender: &signer,
         prjId: u64,
         amount: u64
@@ -441,99 +343,44 @@ module ThundindCoin::ThundindCoin {
             error::invalid_argument(ETHUNDIND_PROJECT_COINTYPE_MISMATCH),
         );
 
+        let is_wl = do_buy_coin_with_aptos<CoinType>(sender, prj, amount);
+
         let buyer = signer::address_of(sender);
-        assert!(
-            vector::contains(&prj.white_list, &buyer),
-            error::invalid_argument(ETHUNDIND_PROJECT_NOT_WHITE_LIST)
-        );
+        if (is_wl) {
+            assert!(
+                vector::contains(&prj.white_list, &buyer),
+                error::invalid_argument(ETHUNDIND_PROJECT_NOT_WHITE_LIST)
+            );
+        };
 
-        let price = update_progress_status(prj, PRJ_PROGRESS_WHITE_LIST, amount);
-
-        exchange_coins<CoinType>(sender, amount, price, prj.launched_by);
-
-        event::emit_event<PrjBuyEvent>(
-            &mut allPrjs.buy_events,
-            PrjBuyEvent {
-                id: prjId,
-                buyer,
-                progress_index: PRJ_PROGRESS_WHITE_LIST,
-                buy_amount: amount,
-                price,
-            },
-        );
+        vector::push_back<address>(&mut prj.buyer_list, buyer);
     }
 
-    // user buy with private sell
-    public entry fun private_sell_buy_project<CoinType>(
+    // project owner withdraw AptosCoin
+    public entry fun withdraw_apt_coin<CoinType>(
         sender: &signer,
-        prjId: u64,
+        prj_id: u64,
         amount: u64
     )
-        acquires AllProjects, CoinEscrowed
+        acquires CoinEscrowed, AllProjects
     {
-        let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
+         let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
         assert!(
-            table::contains(&allPrjs.projects, prjId),
+            table::contains(&allPrjs.projects, prj_id),
             error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
         );
 
-        let prj = table::borrow_mut(&mut allPrjs.projects, prjId);
+        let prj = table::borrow_mut(&mut allPrjs.projects, prj_id);
+        let owner = signer::address_of(sender);
         assert!(
-            type_info::type_name<CoinType>() == prj.coin_info,
-            error::invalid_argument(ETHUNDIND_PROJECT_COINTYPE_MISMATCH),
+            prj.owner == owner,
+            error::invalid_argument(ETHUNDIND_PROJECT_OWNER_MISMATCH)
         );
 
-        let buyer = signer::address_of(sender);
-        let price = update_progress_status(prj, PRJ_PROGRESS_PRIVATE_SELL, amount);
-
-        exchange_coins<CoinType>(sender, amount, price, prj.launched_by);
-
-        event::emit_event<PrjBuyEvent>(
-            &mut allPrjs.buy_events,
-            PrjBuyEvent {
-                id: prjId,
-                buyer,
-                progress_index: PRJ_PROGRESS_PRIVATE_SELL,
-                buy_amount: amount,
-                price,
-            },
-        );
-    }
-
-    // user buy with public sell
-    public entry fun public_sell_buy_project<CoinType>(
-        sender: &signer,
-        prjId: u64,
-        amount: u64
-    )
-        acquires AllProjects, CoinEscrowed
-    {
-        let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
-        assert!(
-            table::contains(&allPrjs.projects, prjId),
-            error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
-        );
-
-        let prj = table::borrow_mut(&mut allPrjs.projects, prjId);
-        assert!(
-            type_info::type_name<CoinType>() == prj.coin_info,
-            error::invalid_argument(ETHUNDIND_PROJECT_COINTYPE_MISMATCH),
-        );
-
-        let buyer = signer::address_of(sender);
-        let price = update_progress_status(prj, PRJ_PROGRESS_PUBLIC_SELL, amount);
-
-        exchange_coins<CoinType>(sender, amount, price, prj.launched_by);
-
-        event::emit_event<PrjBuyEvent>(
-            &mut allPrjs.buy_events,
-            PrjBuyEvent {
-                id: prjId,
-                buyer,
-                progress_index: PRJ_PROGRESS_PUBLIC_SELL,
-                buy_amount: amount,
-                price,
-            },
-        );
+        let apt_escrowed = borrow_global_mut<CoinEscrowed<CoinType>>(owner);
+        let withdraw_amount = coin::extract<AptosCoin>(&mut apt_escrowed.apt_coin, amount);
+        // TODO: to impl withdraw logic
+        coin::deposit<AptosCoin>(owner, withdraw_amount);
+        apt_escrowed.last_withdraw_time = timestamp::now_seconds();
     }
 }
