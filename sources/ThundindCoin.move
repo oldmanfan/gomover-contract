@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 module ThundindCoin::ThundindCoin {
-    use std::string::String;
+    use std::string::{Self, String};
     use std::coin::{Self, Coin};
     use std::signer;
     use std::error;
@@ -11,7 +11,7 @@ module ThundindCoin::ThundindCoin {
     use aptos_std::table::{Self, Table};
     use aptos_framework::timestamp;
     use aptos_std::event::{Self, EventHandle};
-    use aptos_framework::aptos_coin::AptosCoin;
+    use aptos_framework::aptos_coin::{Self, AptosCoin};
     use aptos_framework::managed_coin;
 
     const ETHUNDIND_ONLY_OWNER: u64                 = 0;
@@ -382,5 +382,124 @@ module ThundindCoin::ThundindCoin {
         // TODO: to impl withdraw logic
         coin::deposit<AptosCoin>(owner, withdraw_amount);
         apt_escrowed.last_withdraw_time = timestamp::now_seconds();
+    }
+
+// ------------ unit test starts -------------------
+    #[test_only]
+    struct FakeMoney { }
+
+    #[test_only]
+    use aptos_framework::coins;
+
+    #[test_only]
+    use aptos_framework::account;
+
+    #[test_only(m_owner = @0xCAF0, prj_owner=@0xAABB1)]
+    public fun issue_fake_money(m_owner: &signer, prj_owner: &signer) {
+
+        managed_coin::initialize<FakeMoney>(
+            m_owner,
+            b"Fake Money",
+            b"FM",
+            8,
+            false,
+        );
+
+        let p = signer::address_of(prj_owner);
+        account::create_account(p);
+
+        coins::register<FakeMoney>(prj_owner);
+
+        managed_coin::mint<FakeMoney>(
+            m_owner,
+            p,
+            1000000000000  // 10000FM
+        );
+    }
+
+    #[test(m_owner = @0xCAF0)]
+    public fun t_init_system(m_owner: &signer) {
+        init_system(m_owner);
+    }
+
+    #[test(m_owner = @0xCAF0, prj_owner = @0xAABB1)]
+    public fun t_launch_project(m_owner: &signer, prj_owner: &signer) acquires AllProjects{
+        t_init_system(m_owner);
+
+        let p_owner = signer::address_of(prj_owner);
+        launch_project(
+            m_owner,
+            1001,
+            p_owner,
+            string::utf8(b"Fake Coin Stake"),
+            string::utf8(b"this is a test case of launch project"),
+            string::utf8(b"0xcaf0::ThundindCoin::FakeMoney"),
+            120000000000,
+            40000000000, 10, 100, 200, // white list params
+            40000000000, 20, 300, 400, // private sell params
+            40000000000, 30, 500, 600, // public sell params
+        )
+    }
+
+    #[test(prj_owner=@0xAABB1, m_owner = @0xCAF0)]
+    public fun t_stake_coin(prj_owner: &signer, m_owner: &signer)
+        acquires AllProjects, CoinEscrowed
+    {
+        t_launch_project(m_owner, prj_owner);
+        issue_fake_money(m_owner, prj_owner);
+
+        stake_coin<FakeMoney>(prj_owner, 1001);
+    }
+
+    #[test(prj_owner=@0xAABB1, m_owner = @0xCAF0)]
+    public fun t_add_white_list(prj_owner: &signer, m_owner: &signer)
+        acquires AllProjects, CoinEscrowed
+    {
+        t_stake_coin(prj_owner, m_owner);
+
+        let whiter = vector::empty<address>();
+        vector::push_back(&mut whiter, @0xBBCC0);
+        add_white_list(prj_owner, 1001, whiter);
+    }
+
+
+    #[test_only]
+    fun mint_aptos_coin(aptos_framework: &signer, receiver: &signer, amount: u64) {
+        if (!account::exists_at(signer::address_of(receiver))) {
+            account::create_account(signer::address_of(receiver));
+        };
+
+        let (burn_cap, mint_cap) = aptos_coin::initialize_for_test(aptos_framework);
+        aptos_coin::mint(aptos_framework, signer::address_of(receiver), amount);
+        coin::destroy_mint_cap<AptosCoin>(mint_cap);
+        coin::destroy_burn_cap<AptosCoin>(burn_cap);
+    }
+    #[test_only]
+    use aptos_framework::debug;
+
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @0xCAF0, player = @0xBBCC0)]
+    public fun t_buy_coin(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
+        acquires AllProjects, CoinEscrowed
+    {
+        t_add_white_list(prj_owner, m_owner);
+        mint_aptos_coin(aptos_framework, player, 1000000000000); // 10000 APT
+
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+        // to white list stage
+        timestamp::fast_forward_seconds(150);
+
+        let player_addr = signer::address_of(player);
+
+        let apt_before = coin::balance<AptosCoin>(player_addr);
+        debug::print<u64>(&apt_before);
+        let fm1 = 100000000;
+
+        buy_coin<FakeMoney>(player, 1001, fm1 * 10);  // 10 FM
+
+        let apt_after = coin::balance<AptosCoin>(player_addr);
+        debug::print<u64>(&apt_after);
+        assert!(apt_before - apt_after == 10 * 10, 100);
+
+        assert!(coin::balance<FakeMoney>(signer::address_of(player)) == fm1 * 10, 101);
     }
 }

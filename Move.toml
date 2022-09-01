@@ -1,9 +1,10 @@
 [package]
 name = 'Thundind LaunchPad'
 version = '1.0.0'
+
 [dependencies.AptosFramework]
-git = 'https://github.com/aptos-labs/aptos-core.git'
-rev = 'devnet'
+git = 'https://github.com/davidiw/aptos-core.git'
+rev = 'conversions'
 subdir = 'aptos-move/framework/aptos-framework'
 
 [addresses]
