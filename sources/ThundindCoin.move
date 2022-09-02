@@ -389,6 +389,9 @@ module ThundindCoin::ThundindCoin {
     struct FakeMoney { }
 
     #[test_only]
+    const FM_DECIMALS: u64 = 100000000;
+
+    #[test_only]
     use aptos_framework::coins;
 
     #[test_only]
@@ -413,7 +416,7 @@ module ThundindCoin::ThundindCoin {
         managed_coin::mint<FakeMoney>(
             m_owner,
             p,
-            1000000000000  // 10000FM
+            10000 * FM_DECIMALS // 10000FM
         );
     }
 
@@ -474,11 +477,9 @@ module ThundindCoin::ThundindCoin {
         coin::destroy_mint_cap<AptosCoin>(mint_cap);
         coin::destroy_burn_cap<AptosCoin>(burn_cap);
     }
-    #[test_only]
-    use aptos_framework::debug;
 
     #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @0xCAF0, player = @0xBBCC0)]
-    public fun t_buy_coin(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
+    public fun t_buy_coin_success(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
         acquires AllProjects, CoinEscrowed
     {
         t_add_white_list(prj_owner, m_owner);
@@ -491,15 +492,67 @@ module ThundindCoin::ThundindCoin {
         let player_addr = signer::address_of(player);
 
         let apt_before = coin::balance<AptosCoin>(player_addr);
-        debug::print<u64>(&apt_before);
-        let fm1 = 100000000;
 
-        buy_coin<FakeMoney>(player, 1001, fm1 * 10);  // 10 FM
+        buy_coin<FakeMoney>(player, 1001, FM_DECIMALS * 10);  // 10 FM
 
         let apt_after = coin::balance<AptosCoin>(player_addr);
-        debug::print<u64>(&apt_after);
+
         assert!(apt_before - apt_after == 10 * 10, 100);
 
-        assert!(coin::balance<FakeMoney>(signer::address_of(player)) == fm1 * 10, 101);
+        assert!(coin::balance<FakeMoney>(signer::address_of(player)) == FM_DECIMALS * 10, 101);
+
+        // to private sell stage
+        timestamp::fast_forward_seconds(200);
+        apt_before = coin::balance<AptosCoin>(player_addr);
+
+        buy_coin<FakeMoney>(player, 1001, FM_DECIMALS * 10);  // 10 FM
+
+        apt_after = coin::balance<AptosCoin>(player_addr);
+
+        assert!(apt_before - apt_after == 10 * 20, 100);
+
+        assert!(coin::balance<FakeMoney>(signer::address_of(player)) == FM_DECIMALS * 10 * 2, 101);
+
+        // to public sell stage
+        timestamp::fast_forward_seconds(200);
+        apt_before = coin::balance<AptosCoin>(player_addr);
+
+        buy_coin<FakeMoney>(player, 1001, FM_DECIMALS * 10);  // 10 FM
+
+        apt_after = coin::balance<AptosCoin>(player_addr);
+
+        assert!(apt_before - apt_after == 10 * 30, 100);
+
+        assert!(coin::balance<FakeMoney>(signer::address_of(player)) == FM_DECIMALS * 10 * 3, 101);
+    }
+
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @0xCAF0, player = @0xBBCC2)]
+    #[expected_failure]
+    public fun t_buy_coin_not_white_list(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
+        acquires AllProjects, CoinEscrowed
+    {
+        t_add_white_list(prj_owner, m_owner);
+        mint_aptos_coin(aptos_framework, player, 1000000000000); // 10000 APT
+
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+        // to white list stage
+        timestamp::fast_forward_seconds(150);
+
+        buy_coin<FakeMoney>(player, 1001, FM_DECIMALS * 10);  // 10 FM
+    }
+
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @0xCAF0, player = @0xBBCC0)]
+    #[expected_failure]
+    public fun t_buy_coin_not_sell_stage(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
+        acquires AllProjects, CoinEscrowed
+    {
+        t_add_white_list(prj_owner, m_owner);
+        mint_aptos_coin(aptos_framework, player, 1000000000000); // 10000 APT
+
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+        // to white list stage
+        timestamp::fast_forward_seconds(1000);
+
+        buy_coin<FakeMoney>(player, 1001, FM_DECIMALS * 10);  // 10 FM
     }
 }
