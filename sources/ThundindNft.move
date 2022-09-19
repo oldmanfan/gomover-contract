@@ -9,6 +9,7 @@ module ThundindNft::ThundindNft {
     use std::vector;
     use aptos_std::table::{Self, Table};
     use aptos_framework::timestamp;
+    use aptos_framework::account;
     use aptos_std::event::{Self, EventHandle};
     use aptos_framework::aptos_coin::{Self, AptosCoin};
 
@@ -100,7 +101,7 @@ module ThundindNft::ThundindNft {
             sender,
             AllProjects {
                 projects: table::new(),
-                launch_events: event::new_event_handle<PrjLaunchEvent>(sender),
+                launch_events: account::new_event_handle<PrjLaunchEvent>(sender),
             }
         );
     }
@@ -142,7 +143,7 @@ module ThundindNft::ThundindNft {
             white_list: vector::empty(),        // white list
             buyer_list: vector::empty(),        // all buyers
 
-            buy_events: event::new_event_handle<PrjBuyEvent>(sender),
+            buy_events: account::new_event_handle<PrjBuyEvent>(sender),
         };
 
         let allPrjs = borrow_global_mut<AllProjects>(@ThundindNft);

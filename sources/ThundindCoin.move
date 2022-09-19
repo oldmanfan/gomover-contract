@@ -13,6 +13,7 @@ module ThundindCoin::ThundindCoin {
     use aptos_std::event::{Self, EventHandle};
     use aptos_framework::aptos_coin::{Self, AptosCoin};
     use aptos_framework::managed_coin;
+    use aptos_framework::account;
 
     const ETHUNDIND_ONLY_OWNER: u64                 = 0;
     const ETHUNDIND_ALREADY_INITED: u64             = 1;
@@ -120,7 +121,7 @@ module ThundindCoin::ThundindCoin {
             sender,
             AllProjects {
                 projects: table::new(),
-                launch_events: event::new_event_handle<PrjLaunchEvent>(sender),
+                launch_events: account::new_event_handle<PrjLaunchEvent>(sender),
             }
         );
     }
@@ -163,7 +164,7 @@ module ThundindCoin::ThundindCoin {
             white_list: vector::empty(),        // white list
             buyer_list: vector::empty(),        // all buyers
 
-            buy_events: event::new_event_handle<PrjBuyEvent>(sender),
+            buy_events: account::new_event_handle<PrjBuyEvent>(sender),
         };
 
         let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
