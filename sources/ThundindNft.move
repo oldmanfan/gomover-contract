@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 module ThundindNft::ThundindNft {
-    use std::string::{Self, String};
+    use std::string::{String};
     use std::coin;
     use std::signer;
     use std::error;
@@ -11,7 +11,7 @@ module ThundindNft::ThundindNft {
     use aptos_framework::timestamp;
     use aptos_framework::account;
     use aptos_std::event::{Self, EventHandle};
-    use aptos_framework::aptos_coin::{Self, AptosCoin};
+    use aptos_framework::aptos_coin::{AptosCoin};
 
     const ETHUNDIND_ONLY_OWNER: u64                 = 0;
     const ETHUNDIND_ALREADY_INITED: u64             = 1;

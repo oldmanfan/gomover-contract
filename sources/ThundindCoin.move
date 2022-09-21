@@ -1,8 +1,8 @@
 // Copyright (c) Thundind
 // SPDX-License-Identifier: Apache-2.0
 
-module ThundindCoin::ThundindCoin {
-    use std::string::{Self, String};
+module Thundind::ThundindCoin {
+    use std::string::{String};
     use std::coin::{Self, Coin};
     use std::signer;
     use std::error;
@@ -11,7 +11,7 @@ module ThundindCoin::ThundindCoin {
     use aptos_std::table::{Self, Table};
     use aptos_framework::timestamp;
     use aptos_std::event::{Self, EventHandle};
-    use aptos_framework::aptos_coin::{Self, AptosCoin};
+    use aptos_framework::aptos_coin::{AptosCoin};
     use aptos_framework::managed_coin;
     use aptos_framework::account;
 
@@ -92,7 +92,7 @@ module ThundindCoin::ThundindCoin {
         let owner = signer::address_of(sender);
 
         assert!(
-            @ThundindCoin == owner,
+            @Thundind == owner,
             error::invalid_argument(ETHUNDIND_ONLY_OWNER),
         );
 
@@ -113,7 +113,7 @@ module ThundindCoin::ThundindCoin {
         only_owner(sender);
 
         assert!(
-            !exists<AllProjects>(@ThundindCoin),
+            !exists<AllProjects>(@Thundind),
             error::already_exists(ETHUNDIND_ALREADY_INITED),
         );
 
@@ -167,7 +167,7 @@ module ThundindCoin::ThundindCoin {
             buy_events: account::new_event_handle<PrjBuyEvent>(sender),
         };
 
-        let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
+        let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
 
         table::add(&mut allPrjs.projects, id, prj);
 
@@ -183,7 +183,7 @@ module ThundindCoin::ThundindCoin {
     )
         acquires AllProjects, CoinEscrowed
     {
-        let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
+        let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
         assert!(
             table::contains(&allPrjs.projects, prj_id),
             error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
@@ -227,7 +227,7 @@ module ThundindCoin::ThundindCoin {
     )
         acquires AllProjects
     {
-        let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
+        let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
         assert!(
             table::contains(&allPrjs.projects, prjId),
             error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
@@ -332,7 +332,7 @@ module ThundindCoin::ThundindCoin {
     )
         acquires AllProjects, CoinEscrowed
     {
-        let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
+        let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
         assert!(
             table::contains(&allPrjs.projects, prjId),
             error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
@@ -365,7 +365,7 @@ module ThundindCoin::ThundindCoin {
     )
         acquires CoinEscrowed, AllProjects
     {
-         let allPrjs = borrow_global_mut<AllProjects>(@ThundindCoin);
+         let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
         assert!(
             table::contains(&allPrjs.projects, prj_id),
             error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
@@ -398,7 +398,7 @@ module ThundindCoin::ThundindCoin {
     #[test_only]
     use aptos_framework::account;
 
-    #[test_only(m_owner = @ThundindCoin, prj_owner=@0xAABB1)]
+    #[test_only(m_owner = @Thundind, prj_owner=@0xAABB1)]
     public fun issue_fake_money(m_owner: &signer, prj_owner: &signer) {
 
         managed_coin::initialize<FakeMoney>(
@@ -421,12 +421,12 @@ module ThundindCoin::ThundindCoin {
         );
     }
 
-    #[test(m_owner = @ThundindCoin)]
+    #[test(m_owner = @Thundind)]
     public fun t_init_system(m_owner: &signer) {
         init_system(m_owner);
     }
 
-    #[test(m_owner = @ThundindCoin, prj_owner = @0xAABB1)]
+    #[test(m_owner = @Thundind, prj_owner = @0xAABB1)]
     public fun t_launch_project(m_owner: &signer, prj_owner: &signer) acquires AllProjects{
         t_init_system(m_owner);
 
@@ -445,7 +445,7 @@ module ThundindCoin::ThundindCoin {
         )
     }
 
-    #[test(prj_owner=@0xAABB1, m_owner = @ThundindCoin)]
+    #[test(prj_owner=@0xAABB1, m_owner = @Thundind)]
     public fun t_stake_coin(prj_owner: &signer, m_owner: &signer)
         acquires AllProjects, CoinEscrowed
     {
@@ -455,7 +455,7 @@ module ThundindCoin::ThundindCoin {
         stake_coin<FakeMoney>(prj_owner, 1001);
     }
 
-    #[test(prj_owner=@0xAABB1, m_owner = @ThundindCoin)]
+    #[test(prj_owner=@0xAABB1, m_owner = @Thundind)]
     public fun t_add_white_list(prj_owner: &signer, m_owner: &signer)
         acquires AllProjects, CoinEscrowed
     {
@@ -479,7 +479,7 @@ module ThundindCoin::ThundindCoin {
         coin::destroy_burn_cap<AptosCoin>(burn_cap);
     }
 
-    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @ThundindCoin, player = @0xBBCC0)]
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC0)]
     public fun t_buy_coin_success(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
         acquires AllProjects, CoinEscrowed
     {
@@ -527,7 +527,7 @@ module ThundindCoin::ThundindCoin {
         assert!(coin::balance<FakeMoney>(signer::address_of(player)) == FM_DECIMALS * 10 * 3, 101);
     }
 
-    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @ThundindCoin, player = @0xBBCC2)]
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC2)]
     #[expected_failure]
     public fun t_buy_coin_not_white_list(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
         acquires AllProjects, CoinEscrowed
@@ -542,7 +542,7 @@ module ThundindCoin::ThundindCoin {
         buy_coin<FakeMoney>(player, 1001, FM_DECIMALS * 10);  // 10 FM
     }
 
-    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @ThundindCoin, player = @0xBBCC0)]
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC0)]
     #[expected_failure]
     public fun t_buy_coin_not_sell_stage(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
         acquires AllProjects, CoinEscrowed
