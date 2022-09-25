@@ -26,6 +26,9 @@ module Thundind::ThundindNft {
     const ETHUNDIND_PROJECT_PROGRESS_NOT_EXIST: u64 = 10;
     const ETHUNDIND_PROJECT_NOT_WHITE_LIST: u64     = 11;
 
+    const STAGE_WHITE_LIST: u8 = 1;
+    const STAGE_PRIVATE_SELL: u8 = 2;
+    const STAGE_PUBLIC_SELL: u8 = 3;
 
     struct PrjLaunchEvent has drop, store {
         id: u64,
@@ -44,6 +47,13 @@ module Thundind::ThundindNft {
         price: u64,           // 1 Token for xx Aptos
         start_time: u64,      // progress start time
         end_time: u64,        // progress end time
+        limit_per_account: u64, // limitation for each account
+    }
+
+    struct BoughtRecord has store {
+        wl_amount: u64, // how many a user bought during white list stage.
+        pv_amount: u64, //
+        pb_amount: u64,
     }
 
     struct NftProject has store {
@@ -58,7 +68,7 @@ module Thundind::ThundindNft {
         public_sell_stage: Stage,     // starting, published.....
 
         white_list: vector<address>,        // white list
-        buyer_list: vector<address>,        // all buyers
+        buyer_list: Table<address, BoughtRecord>,        // all buyers
 
         buy_events: EventHandle<PrjBuyEvent>,
     }
@@ -79,13 +89,14 @@ module Thundind::ThundindNft {
         owner
     }
 
-    fun make_stage(amount: u64, price: u64, start: u64, end: u64): Stage {
+    fun make_stage(amount: u64, price: u64, start: u64, end: u64, limit: u64): Stage {
         Stage {
             sell_amount: amount,
             sold_amount: 0,
             price,
             start_time: start,
             end_time: end,
+            limit_per_account: limit,
         }
     }
 
@@ -118,9 +129,9 @@ module Thundind::ThundindNft {
             name: String,
             description: String,
             total_presell_amount: u64,
-            wl_amount: u64, wl_price: u64, wl_start: u64, wl_end: u64, // white list params
-            pv_amount: u64, pv_price: u64, pv_start: u64, pv_end: u64, // private sell params
-            pb_amount: u64, pb_price: u64, pb_start: u64, pb_end: u64, // public sell params
+            wl_amount: u64, wl_price: u64, wl_start: u64, wl_end: u64, wl_limit: u64,// white list params
+            pv_amount: u64, pv_price: u64, pv_start: u64, pv_end: u64, pv_limit: u64,// private sell params
+            pb_amount: u64, pb_price: u64, pb_start: u64, pb_end: u64, pb_limit: u64,// public sell params
     ) acquires AllProjects {
         only_owner(sender);
 
@@ -136,12 +147,12 @@ module Thundind::ThundindNft {
             prj_description: description,
             total_presell_amount,
 
-            white_list_stage:   make_stage(wl_amount, wl_price, wl_start, wl_end),     // white list progress
-            private_sell_stage: make_stage(pv_amount, pv_price, pv_start, pv_end),     // private sell progress
-            public_sell_stage:  make_stage(pb_amount, pb_price, pb_start, pb_end),     // public sell progress
+            white_list_stage:   make_stage(wl_amount, wl_price, wl_start, wl_end, wl_limit),     // white list progress
+            private_sell_stage: make_stage(pv_amount, pv_price, pv_start, pv_end, pv_limit),     // private sell progress
+            public_sell_stage:  make_stage(pb_amount, pb_price, pb_start, pb_end, pb_limit),     // public sell progress
 
             white_list: vector::empty(),        // white list
-            buyer_list: vector::empty(),        // all buyers
+            buyer_list: table::new(),        // all buyers
 
             buy_events: account::new_event_handle<PrjBuyEvent>(sender),
         };
@@ -187,19 +198,21 @@ module Thundind::ThundindNft {
         sender: &signer,
         prj: &mut NftProject,
         amount: u64
-    ): bool
+    ): u8
     {
         let now = timestamp::now_seconds();
-        let is_wl_stage: bool = false;
+        let in_stage: u8 = 0;
         let stage: &mut Stage;
 
         if (prj.private_sell_stage.start_time <= now && now < prj.private_sell_stage.end_time) {
             stage = &mut prj.private_sell_stage;
+            in_stage = STAGE_PRIVATE_SELL;
         } else if (prj.public_sell_stage.start_time <= now && now < prj.public_sell_stage.end_time) {
             stage = &mut prj.public_sell_stage;
+            in_stage = STAGE_PUBLIC_SELL;
         } else if (prj.white_list_stage.start_time <= now && now < prj.white_list_stage.end_time) {
             stage = &mut prj.white_list_stage;
-            is_wl_stage = true;
+            in_stage = STAGE_WHITE_LIST;
         } else {
             assert!(
                 false,
@@ -228,7 +241,7 @@ module Thundind::ThundindNft {
             }
         );
 
-        is_wl_stage
+        in_stage
     }
 
     // user buy with white list
@@ -247,24 +260,48 @@ module Thundind::ThundindNft {
         );
 
         let prj = table::borrow_mut(&mut allPrjs.projects, prj_id);
-        let is_wl = do_exchange_nft_aptos(sender, prj, amount);
+        let in_stage = do_exchange_nft_aptos(sender, prj, amount);
         let buyer = signer::address_of(sender);
-        if (is_wl) {
+        if (in_stage == STAGE_WHITE_LIST) {
             assert!(
                 vector::contains(&prj.white_list, &buyer),
                 error::invalid_argument(ETHUNDIND_PROJECT_NOT_WHITE_LIST)
             );
         };
 
-        vector::push_back<address>(&mut prj.buyer_list, buyer);
+        if (table::contains(&prj.buyer_list, buyer)) {
+            let record = table::borrow_mut(&mut prj.buyer_list, buyer);
+            if (in_stage == STAGE_PRIVATE_SELL) {
+                record.pv_amount = record.pv_amount + amount;
+            } else if (in_stage == STAGE_PUBLIC_SELL) {
+                record.pb_amount = record.pb_amount + amount;
+            } else {
+                record.wl_amount = record.wl_amount + amount;
+            }
+        } else {
+            let record = BoughtRecord {
+                pv_amount:  if (in_stage == STAGE_PRIVATE_SELL) amount else 0,
+                pb_amount:  if (in_stage == STAGE_PUBLIC_SELL) amount else 0,
+                wl_amount:  if (in_stage == STAGE_WHITE_LIST) amount else 0,
+            };
+
+            table::add(&mut prj.buyer_list, buyer, record);
+        }
     }
 
     // ------------ unit test starts -------------------
     #[test_only]
-    use aptos_framework::account;
+    use aptos_framework::aptos_account;
+
+    #[test_only]
+    use std::string;
+
+    #[test_only]
+    use aptos_framework::aptos_coin;
 
     #[test(m_owner = @Thundind)]
     public fun t_init_system(m_owner: &signer) {
+        aptos_account::create_account(signer::address_of(m_owner));
         init_system(m_owner);
     }
 
@@ -273,7 +310,7 @@ module Thundind::ThundindNft {
         t_init_system(m_owner);
 
         let p_owner = signer::address_of(prj_owner);
-        account::create_account(p_owner);
+        aptos_account::create_account(p_owner);
 
         launch_project(
             m_owner,
@@ -282,9 +319,9 @@ module Thundind::ThundindNft {
             string::utf8(b"Fake NFT Stake"),
             string::utf8(b"this is a test case of launch project"),
             3000,
-            1000, 10, 100, 200, // white list params
-            1000, 20, 300, 400, // private sell params
-            1000, 30, 500, 600, // public sell params
+            1000, 10, 100, 200, 30,// white list params
+            1000, 20, 300, 400, 30,// private sell params
+            1000, 30, 500, 600, 30,// public sell params
         )
     }
 
@@ -302,7 +339,7 @@ module Thundind::ThundindNft {
     #[test_only]
     fun mint_aptos_coin(aptos_framework: &signer, receiver: &signer, amount: u64) {
         if (!account::exists_at(signer::address_of(receiver))) {
-            account::create_account(signer::address_of(receiver));
+            aptos_account::create_account(signer::address_of(receiver));
         };
 
         let (burn_cap, mint_cap) = aptos_coin::initialize_for_test(aptos_framework);
