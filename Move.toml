@@ -1,5 +1,5 @@
 [package]
-name = 'ThundindLaunchPad'
+name = 'LaunchPad'
 version = '1.0.0'
 
 [dependencies.AptosFramework]
@@ -12,4 +12,3 @@ std = "0x1"
 aptos_std = "0x1"
 aptos_framework = "0x1"
 Thundind = "_"
-ThundindNft = "0xCAF1"

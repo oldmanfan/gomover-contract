@@ -1,8 +1,8 @@
 // Copyright (c) Thundind
 // SPDX-License-Identifier: Apache-2.0
 
-module ThundindNft::ThundindNft {
-    use std::string::{String};
+module Thundind::ThundindNft {
+    use std::string::String;
     use std::coin;
     use std::signer;
     use std::error;
@@ -11,7 +11,7 @@ module ThundindNft::ThundindNft {
     use aptos_framework::timestamp;
     use aptos_framework::account;
     use aptos_std::event::{Self, EventHandle};
-    use aptos_framework::aptos_coin::{AptosCoin};
+    use aptos_framework::aptos_coin::AptosCoin;
 
     const ETHUNDIND_ONLY_OWNER: u64                 = 0;
     const ETHUNDIND_ALREADY_INITED: u64             = 1;
@@ -72,7 +72,7 @@ module ThundindNft::ThundindNft {
         let owner = signer::address_of(sender);
 
         assert!(
-            @ThundindNft == owner,
+            @Thundind == owner,
             error::invalid_argument(ETHUNDIND_ONLY_OWNER),
         );
 
@@ -93,7 +93,7 @@ module ThundindNft::ThundindNft {
         only_owner(sender);
 
         assert!(
-            !exists<AllProjects>(@ThundindNft),
+            !exists<AllProjects>(@Thundind),
             error::already_exists(ETHUNDIND_ALREADY_INITED),
         );
 
@@ -146,7 +146,7 @@ module ThundindNft::ThundindNft {
             buy_events: account::new_event_handle<PrjBuyEvent>(sender),
         };
 
-        let allPrjs = borrow_global_mut<AllProjects>(@ThundindNft);
+        let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
 
         table::add(&mut allPrjs.projects, id, prj);
 
@@ -167,7 +167,7 @@ module ThundindNft::ThundindNft {
     )
         acquires AllProjects
     {
-        let allPrjs = borrow_global_mut<AllProjects>(@ThundindNft);
+        let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
         assert!(
             table::contains(&allPrjs.projects, prj_id),
             error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
@@ -240,7 +240,7 @@ module ThundindNft::ThundindNft {
         acquires AllProjects
     {
 
-        let allPrjs = borrow_global_mut<AllProjects>(@ThundindNft);
+        let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
         assert!(
             table::contains(&allPrjs.projects, prj_id),
             error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
@@ -263,12 +263,12 @@ module ThundindNft::ThundindNft {
     #[test_only]
     use aptos_framework::account;
 
-    #[test(m_owner = @ThundindNft)]
+    #[test(m_owner = @Thundind)]
     public fun t_init_system(m_owner: &signer) {
         init_system(m_owner);
     }
 
-    #[test(m_owner = @ThundindNft, prj_owner = @0xAABB1)]
+    #[test(m_owner = @Thundind, prj_owner = @0xAABB1)]
     public fun t_launch_project(m_owner: &signer, prj_owner: &signer) acquires AllProjects{
         t_init_system(m_owner);
 
@@ -288,7 +288,7 @@ module ThundindNft::ThundindNft {
         )
     }
 
-    #[test(prj_owner=@0xAABB1, m_owner = @ThundindNft)]
+    #[test(prj_owner=@0xAABB1, m_owner = @Thundind)]
     public fun t_add_white_list(prj_owner: &signer, m_owner: &signer)
         acquires AllProjects
     {
@@ -311,7 +311,7 @@ module ThundindNft::ThundindNft {
         coin::destroy_burn_cap<AptosCoin>(burn_cap);
     }
 
-    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @ThundindNft, player = @0xBBCC0)]
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC0)]
     public fun t_buy_coin_success(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
         acquires AllProjects
     {
@@ -352,7 +352,7 @@ module ThundindNft::ThundindNft {
         assert!(apt_after - apt_before == 10 * 30, 100);
     }
 
-    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @ThundindNft, player = @0xBBCC2)]
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC2)]
     #[expected_failure]
     public fun t_buy_coin_not_white_list(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
         acquires AllProjects
@@ -367,7 +367,7 @@ module ThundindNft::ThundindNft {
         buy_nft(player, 1001, 10);
     }
 
-    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @ThundindNft, player = @0xBBCC0)]
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC0)]
     #[expected_failure]
     public fun t_buy_coin_not_sell_stage(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
         acquires AllProjects

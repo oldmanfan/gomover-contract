@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 module Thundind::ThundindCoin {
-    use std::string::{String};
+    use std::string::String;
     use std::coin::{Self, Coin};
     use std::signer;
     use std::error;
@@ -11,7 +11,7 @@ module Thundind::ThundindCoin {
     use aptos_std::table::{Self, Table};
     use aptos_framework::timestamp;
     use aptos_std::event::{Self, EventHandle};
-    use aptos_framework::aptos_coin::{AptosCoin};
+    use aptos_framework::aptos_coin::AptosCoin;
     use aptos_framework::managed_coin;
     use aptos_framework::account;
 
@@ -27,6 +27,8 @@ module Thundind::ThundindCoin {
     const ETHUNDIND_PROJECT_PROGRESS_TIME_OVER: u64 = 9;
     const ETHUNDIND_PROJECT_PROGRESS_NOT_EXIST: u64 = 10;
     const ETHUNDIND_PROJECT_NOT_WHITE_LIST: u64     = 11;
+    const ETHUNDIND_NOT_CLAIMABLE: u64              = 12;
+    const ETHUNDIND_NOT_BOUGHT: u64              = 13;
 
     const MAX_U128: u128 = 340282366920938463463374607431768211455;
 
@@ -40,6 +42,11 @@ module Thundind::ThundindCoin {
     const PRJ_PROGRESS_PRIVATE_SELL: u8 = 2;
     const PRJ_PROGRESS_PUBLIC_SELL: u8  = 3;
 
+
+    const STAGE_WHITE_LIST: u8 = 1;
+    const STAGE_PRIVATE_SELL: u8 = 2;
+    const STAGE_PUBLIC_SELL: u8 = 3;
+
     struct PrjLaunchEvent has drop, store {
         id: u64,
         amount: u64,
@@ -52,11 +59,18 @@ module Thundind::ThundindCoin {
     }
 
     struct Stage has store {
-        sell_amount: u64,     // want sell amount
+        selling_amount: u64,     // want sell amount
         sold_amount: u64,     // real sold amount
         price: u64,           // 1 Token for xx Aptos
         start_time: u64,      // progress start time
         end_time: u64,        // progress end time
+        limit_per_account: u64, // limitation for each account
+    }
+
+    struct BoughtRecord has store {
+        wl_amount: u64, // how many a user bought during white list stage.
+        pv_amount: u64, //
+        pb_amount: u64,
     }
 
     struct Project has store {
@@ -64,15 +78,18 @@ module Thundind::ThundindCoin {
         owner: address,     // project launched by
         name: String,             // project name
         description: String,      // details of project
+        token_distribution: String, // a brief introduction for token distribution
+        initial_market_cap_at_tge: String, // Initial Market cap intro
         coin_info: String,
         total_presell_amount: u64, // total amount for launch
+        claimable_time: u64, // buyer can claim token after this time
 
         white_list_stage: Stage,     // starting, published.....
         private_sell_stage: Stage,     // starting, published.....
         public_sell_stage: Stage,     // starting, published.....
 
         white_list: vector<address>,        // white list
-        buyer_list: vector<address>,        // all buyers
+        buyer_list: Table<address, BoughtRecord>,        // all buyers
 
         buy_events: EventHandle<PrjBuyEvent>,
     }
@@ -82,10 +99,14 @@ module Thundind::ThundindCoin {
         launch_events: EventHandle<PrjLaunchEvent>,
     }
 
-    struct CoinEscrowed<phantom CoinType> has key {
+    struct ProjectEscrowedCoin<phantom CoinType> has key {
        coin: Coin<CoinType>,
        apt_coin: Coin<AptosCoin>,
        last_withdraw_time: u64,
+    }
+
+    struct BuyerEscrowedCoin<phantom CoinType> has key {
+        coin: Coin<CoinType>,
     }
 
     fun only_owner(sender: &signer): address {
@@ -99,18 +120,19 @@ module Thundind::ThundindCoin {
         owner
     }
 
-    fun make_stage(amount: u64, price: u64, start: u64, end: u64): Stage {
+    fun make_stage(amount: u64, price: u64, start: u64, end: u64, limit: u64): Stage {
         Stage {
-            sell_amount: amount,
+            selling_amount: amount,
             sold_amount: 0,
             price,
             start_time: start,
             end_time: end,
+            limit_per_account: limit
         }
     }
 
     public entry fun init_system(sender: &signer) {
-        only_owner(sender);
+        // only_owner(sender);
 
         assert!(
             !exists<AllProjects>(@Thundind),
@@ -136,11 +158,14 @@ module Thundind::ThundindCoin {
             owner: address,
             name: String,
             description: String,
+            token_distribution: String, // a brief introduction for token distribution
+            initial_market_cap_at_tge: String,
             coin_info: String,  // to describe the coin info, as: `0x1::FakeCoin::Coin`
             total_presell_amount: u64,
-            wl_amount: u64, wl_price: u64, wl_start: u64, wl_end: u64, // white list params
-            pv_amount: u64, pv_price: u64, pv_start: u64, pv_end: u64, // private sell params
-            pb_amount: u64, pb_price: u64, pb_start: u64, pb_end: u64, // public sell params
+            claimable_time: u64,
+            wl_amount: u64, wl_price: u64, wl_start: u64, wl_end: u64, wl_limit: u64, // white list params
+            pv_amount: u64, pv_price: u64, pv_start: u64, pv_end: u64, pv_limit: u64, // private sell params
+            pb_amount: u64, pb_price: u64, pb_start: u64, pb_end: u64, pb_limit: u64, // public sell params
     ) acquires AllProjects {
 
         only_owner(sender);
@@ -155,14 +180,18 @@ module Thundind::ThundindCoin {
             owner,
             name,
             description,
+            token_distribution,
+            initial_market_cap_at_tge,
             coin_info,
             total_presell_amount,
-            white_list_stage:   make_stage(wl_amount, wl_price, wl_start, wl_end),     // white list progress
-            private_sell_stage: make_stage(pv_amount, pv_price, pv_start, pv_end),     // private sell progress
-            public_sell_stage:  make_stage(pb_amount, pb_price, pb_start, pb_end),     // public sell progress
+            claimable_time,
+
+            white_list_stage:   make_stage(wl_amount, wl_price, wl_start, wl_end, wl_limit),     // white list progress
+            private_sell_stage: make_stage(pv_amount, pv_price, pv_start, pv_end, pv_limit),     // private sell progress
+            public_sell_stage:  make_stage(pb_amount, pb_price, pb_start, pb_end, pb_limit),     // public sell progress
 
             white_list: vector::empty(),        // white list
-            buyer_list: vector::empty(),        // all buyers
+            buyer_list: table::new(),        // all buyers
 
             buy_events: account::new_event_handle<PrjBuyEvent>(sender),
         };
@@ -181,7 +210,7 @@ module Thundind::ThundindCoin {
         sender: &signer,
         prj_id: u64
     )
-        acquires AllProjects, CoinEscrowed
+        acquires AllProjects, ProjectEscrowedCoin
     {
         let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
         assert!(
@@ -200,10 +229,10 @@ module Thundind::ThundindCoin {
             error::invalid_argument(ETHUNDIND_PROJECT_OWNER_MISMATCH)
         );
 
-        if (!exists<CoinEscrowed<CoinType>>(owner)) {
+        if (!exists<ProjectEscrowedCoin<CoinType>>(owner)) {
             move_to(
                 sender,
-                CoinEscrowed {
+                ProjectEscrowedCoin {
                     coin: coin::zero<CoinType>(),
                     apt_coin: coin::zero<AptosCoin>(),
                     last_withdraw_time: 0
@@ -211,7 +240,7 @@ module Thundind::ThundindCoin {
             );
         };
 
-        let staked_coin = &mut borrow_global_mut<CoinEscrowed<CoinType>>(owner).coin;
+        let staked_coin = &mut borrow_global_mut<ProjectEscrowedCoin<CoinType>>(owner).coin;
         let staked_amount = coin::withdraw<CoinType>(sender, prj.total_presell_amount);
         coin::merge<CoinType>(staked_coin, staked_amount);
     }
@@ -260,7 +289,7 @@ module Thundind::ThundindCoin {
         amount: u64,
         price: u64
     )
-        acquires CoinEscrowed
+        acquires ProjectEscrowedCoin, BuyerEscrowedCoin
     {
         let decimal = coin::decimals<CoinType>();
         let aptos_amount = amount * price / pow(10, (decimal as u64));
@@ -268,9 +297,16 @@ module Thundind::ThundindCoin {
         if (!coin::is_account_registered<CoinType>(signer::address_of(buyer))) {
             managed_coin::register<CoinType>(buyer);
         };
-        let coin_escrowed = borrow_global_mut<CoinEscrowed<CoinType>>(prj_owner);
+        let coin_escrowed = borrow_global_mut<ProjectEscrowedCoin<CoinType>>(prj_owner);
         let t = coin::extract<CoinType>(&mut coin_escrowed.coin, amount);
-        coin::deposit(signer::address_of(buyer), t);
+
+        let buyer_address = signer::address_of(buyer);
+        if (exists<BuyerEscrowedCoin<CoinType>>(buyer_address)) {
+            let c = &mut borrow_global_mut<BuyerEscrowedCoin<CoinType>>(buyer_address).coin;
+            coin::merge<CoinType>(c, t);
+        } else {
+            move_to(buyer, BuyerEscrowedCoin { coin: t });
+        };
         // escrow AptosCoin to owner storage
         let paied_apt = coin::withdraw<AptosCoin>(buyer, aptos_amount);
         coin::merge<AptosCoin>(&mut coin_escrowed.apt_coin, paied_apt);
@@ -280,20 +316,22 @@ module Thundind::ThundindCoin {
         sender: &signer,
         prj: &mut Project,
         amount: u64
-    ): bool
-        acquires CoinEscrowed
+    ): u8
+        acquires ProjectEscrowedCoin, BuyerEscrowedCoin
     {
         let now = timestamp::now_seconds();
-        let is_wl_stage: bool = false;
+        let in_stage: u8 = 0;
         let stage: &mut Stage;
 
         if (prj.private_sell_stage.start_time <= now && now < prj.private_sell_stage.end_time) {
             stage = &mut prj.private_sell_stage;
+            in_stage = STAGE_PRIVATE_SELL;
         } else if (prj.public_sell_stage.start_time <= now && now < prj.public_sell_stage.end_time) {
             stage = &mut prj.public_sell_stage;
+            in_stage = STAGE_PUBLIC_SELL;
         } else if (prj.white_list_stage.start_time <= now && now < prj.white_list_stage.end_time) {
             stage = &mut prj.white_list_stage;
-            is_wl_stage = true;
+            in_stage = STAGE_WHITE_LIST;
         } else {
             assert!(
                 false,
@@ -304,7 +342,7 @@ module Thundind::ThundindCoin {
         };
 
         assert!(
-            stage.sold_amount + amount <= stage.sell_amount,
+            stage.sold_amount + amount <= stage.selling_amount,
             error::invalid_argument(ETHUNDIND_PROJECT_AMOUNT_OVER_BOUND)
         );
 
@@ -321,7 +359,7 @@ module Thundind::ThundindCoin {
             }
         );
 
-        is_wl_stage
+        in_stage
     }
 
     // user buy coin
@@ -330,7 +368,7 @@ module Thundind::ThundindCoin {
         prjId: u64,
         amount: u64
     )
-        acquires AllProjects, CoinEscrowed
+        acquires AllProjects, ProjectEscrowedCoin, BuyerEscrowedCoin
     {
         let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
         assert!(
@@ -344,17 +382,34 @@ module Thundind::ThundindCoin {
             error::invalid_argument(ETHUNDIND_PROJECT_COINTYPE_MISMATCH),
         );
 
-        let is_wl = do_buy_coin_with_aptos<CoinType>(sender, prj, amount);
+        let in_stage = do_buy_coin_with_aptos<CoinType>(sender, prj, amount);
 
         let buyer = signer::address_of(sender);
-        if (is_wl) {
+        if (in_stage == STAGE_WHITE_LIST) {
             assert!(
                 vector::contains(&prj.white_list, &buyer),
                 error::invalid_argument(ETHUNDIND_PROJECT_NOT_WHITE_LIST)
             );
         };
 
-        vector::push_back<address>(&mut prj.buyer_list, buyer);
+        if (table::contains(&prj.buyer_list, buyer)) {
+            let record = table::borrow_mut(&mut prj.buyer_list, buyer);
+            if (in_stage == STAGE_PRIVATE_SELL) {
+                record.pv_amount = record.pv_amount + amount;
+            } else if (in_stage == STAGE_PUBLIC_SELL) {
+                record.pb_amount = record.pb_amount + amount;
+            } else {
+                record.wl_amount = record.wl_amount + amount;
+            }
+        } else {
+            let record = BoughtRecord {
+                pv_amount:  if (in_stage == STAGE_PRIVATE_SELL) amount else 0,
+                pb_amount:  if (in_stage == STAGE_PUBLIC_SELL) amount else 0,
+                wl_amount:  if (in_stage == STAGE_WHITE_LIST) amount else 0,
+            };
+
+            table::add(&mut prj.buyer_list, buyer, record);
+        }
     }
 
     // project owner withdraw AptosCoin
@@ -363,9 +418,9 @@ module Thundind::ThundindCoin {
         prj_id: u64,
         amount: u64
     )
-        acquires CoinEscrowed, AllProjects
+        acquires ProjectEscrowedCoin, AllProjects
     {
-         let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
+        let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
         assert!(
             table::contains(&allPrjs.projects, prj_id),
             error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
@@ -378,11 +433,42 @@ module Thundind::ThundindCoin {
             error::invalid_argument(ETHUNDIND_PROJECT_OWNER_MISMATCH)
         );
 
-        let apt_escrowed = borrow_global_mut<CoinEscrowed<CoinType>>(owner);
+        let apt_escrowed = borrow_global_mut<ProjectEscrowedCoin<CoinType>>(owner);
         let withdraw_amount = coin::extract<AptosCoin>(&mut apt_escrowed.apt_coin, amount);
         // TODO: to impl withdraw logic
         coin::deposit<AptosCoin>(owner, withdraw_amount);
         apt_escrowed.last_withdraw_time = timestamp::now_seconds();
+    }
+
+    /// buyer request to claim the token who bought at project
+    public entry fun buyer_claim_token<CoinType>(
+        sender: &signer,
+        prj_id: u64
+    )
+        acquires BuyerEscrowedCoin, AllProjects
+    {
+        let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
+        assert!(
+            table::contains(&allPrjs.projects, prj_id),
+            error::not_found(ETHUNDIND_PROJECT_NOT_EXIST),
+        );
+
+        let prj = table::borrow_mut(&mut allPrjs.projects, prj_id);
+        let now = timestamp::now_seconds();
+        assert!(
+            now >= prj.claimable_time,
+            error::invalid_argument(ETHUNDIND_NOT_CLAIMABLE)
+        );
+
+        let buyer_address = signer::address_of(sender);
+        assert!(
+            exists<BuyerEscrowedCoin<CoinType>>(buyer_address),
+            error::invalid_argument(ETHUNDIND_NOT_BOUGHT)
+        );
+
+        let c = &mut borrow_global_mut<BuyerEscrowedCoin<CoinType>>(buyer_address).coin;
+        let claim_amount = coin::extract_all<CoinType>(c);
+        coin::deposit<CoinType>(buyer_address, claim_amount);
     }
 
 // ------------ unit test starts -------------------
@@ -390,13 +476,16 @@ module Thundind::ThundindCoin {
     struct FakeMoney { }
 
     #[test_only]
-    const FM_DECIMALS: u64 = 100000000;
+    use aptos_framework::aptos_account;
 
     #[test_only]
-    use aptos_framework::coins;
+    use std::string;
 
     #[test_only]
-    use aptos_framework::account;
+    use aptos_framework::aptos_coin;
+
+    #[test_only]
+    const FM_DECIMALS: u64 = 1;
 
     #[test_only(m_owner = @Thundind, prj_owner=@0xAABB1)]
     public fun issue_fake_money(m_owner: &signer, prj_owner: &signer) {
@@ -405,14 +494,14 @@ module Thundind::ThundindCoin {
             m_owner,
             b"Fake Money",
             b"FM",
-            8,
+            0,
             false,
         );
 
         let p = signer::address_of(prj_owner);
-        account::create_account(p);
+        aptos_account::create_account(p);
 
-        coins::register<FakeMoney>(prj_owner);
+        coin::register<FakeMoney>(prj_owner);
 
         managed_coin::mint<FakeMoney>(
             m_owner,
@@ -423,6 +512,7 @@ module Thundind::ThundindCoin {
 
     #[test(m_owner = @Thundind)]
     public fun t_init_system(m_owner: &signer) {
+        aptos_account::create_account(signer::address_of(m_owner));
         init_system(m_owner);
     }
 
@@ -437,17 +527,20 @@ module Thundind::ThundindCoin {
             p_owner,
             string::utf8(b"Fake Coin Stake"),
             string::utf8(b"this is a test case of launch project"),
+            string::utf8(b"20% for sell, 80% for dev"),
+            string::utf8(b"45% TGE for 2 weeks"),
             string::utf8(b"0xcaf0::ThundindCoin::FakeMoney"),
-            120000000000,
-            40000000000, 10, 100, 200, // white list params
-            40000000000, 20, 300, 400, // private sell params
-            40000000000, 30, 500, 600, // public sell params
+            1200,
+            700, // claimable time
+            400, 10, 100, 200, 20,// white list params
+            400, 20, 300, 400, 20,// private sell params
+            400, 30, 500, 600, 20,// public sell params
         )
     }
 
     #[test(prj_owner=@0xAABB1, m_owner = @Thundind)]
     public fun t_stake_coin(prj_owner: &signer, m_owner: &signer)
-        acquires AllProjects, CoinEscrowed
+        acquires AllProjects, ProjectEscrowedCoin
     {
         t_launch_project(m_owner, prj_owner);
         issue_fake_money(m_owner, prj_owner);
@@ -457,7 +550,7 @@ module Thundind::ThundindCoin {
 
     #[test(prj_owner=@0xAABB1, m_owner = @Thundind)]
     public fun t_add_white_list(prj_owner: &signer, m_owner: &signer)
-        acquires AllProjects, CoinEscrowed
+        acquires AllProjects, ProjectEscrowedCoin
     {
         t_stake_coin(prj_owner, m_owner);
 
@@ -470,7 +563,7 @@ module Thundind::ThundindCoin {
     #[test_only]
     fun mint_aptos_coin(aptos_framework: &signer, receiver: &signer, amount: u64) {
         if (!account::exists_at(signer::address_of(receiver))) {
-            account::create_account(signer::address_of(receiver));
+            aptos_account::create_account(signer::address_of(receiver));
         };
 
         let (burn_cap, mint_cap) = aptos_coin::initialize_for_test(aptos_framework);
@@ -481,7 +574,7 @@ module Thundind::ThundindCoin {
 
     #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC0)]
     public fun t_buy_coin_success(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
-        acquires AllProjects, CoinEscrowed
+        acquires AllProjects, ProjectEscrowedCoin, BuyerEscrowedCoin
     {
         t_add_white_list(prj_owner, m_owner);
         mint_aptos_coin(aptos_framework, player, 1000000000000); // 10000 APT
@@ -500,8 +593,6 @@ module Thundind::ThundindCoin {
 
         assert!(apt_before - apt_after == 10 * 10, 100);
 
-        assert!(coin::balance<FakeMoney>(signer::address_of(player)) == FM_DECIMALS * 10, 101);
-
         // to private sell stage
         timestamp::fast_forward_seconds(200);
         apt_before = coin::balance<AptosCoin>(player_addr);
@@ -512,8 +603,6 @@ module Thundind::ThundindCoin {
 
         assert!(apt_before - apt_after == 10 * 20, 100);
 
-        assert!(coin::balance<FakeMoney>(signer::address_of(player)) == FM_DECIMALS * 10 * 2, 101);
-
         // to public sell stage
         timestamp::fast_forward_seconds(200);
         apt_before = coin::balance<AptosCoin>(player_addr);
@@ -523,14 +612,25 @@ module Thundind::ThundindCoin {
         apt_after = coin::balance<AptosCoin>(player_addr);
 
         assert!(apt_before - apt_after == 10 * 30, 100);
+    }
 
-        assert!(coin::balance<FakeMoney>(signer::address_of(player)) == FM_DECIMALS * 10 * 3, 101);
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC0)]
+    public fun t_buyer_claim_success(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
+        acquires AllProjects, ProjectEscrowedCoin, BuyerEscrowedCoin
+    {
+        t_buy_coin_success(prj_owner, m_owner, aptos_framework, player);
+
+        timestamp::fast_forward_seconds(200);
+
+        buyer_claim_token<FakeMoney>(player, 1001);
+
+        assert!(coin::balance<FakeMoney>(signer::address_of(player)) == FM_DECIMALS * 10 * 3, 109);
     }
 
     #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC2)]
     #[expected_failure]
     public fun t_buy_coin_not_white_list(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
-        acquires AllProjects, CoinEscrowed
+        acquires AllProjects, ProjectEscrowedCoin, BuyerEscrowedCoin
     {
         t_add_white_list(prj_owner, m_owner);
         mint_aptos_coin(aptos_framework, player, 1000000000000); // 10000 APT
@@ -545,7 +645,7 @@ module Thundind::ThundindCoin {
     #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC0)]
     #[expected_failure]
     public fun t_buy_coin_not_sell_stage(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
-        acquires AllProjects, CoinEscrowed
+        acquires AllProjects, ProjectEscrowedCoin, BuyerEscrowedCoin
     {
         t_add_white_list(prj_owner, m_owner);
         mint_aptos_coin(aptos_framework, player, 1000000000000); // 10000 APT
