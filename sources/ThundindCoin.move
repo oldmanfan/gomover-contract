@@ -152,7 +152,7 @@ module Thundind::ThundindCoin {
     * launch_project
     *   start a request for launching, invoked by team member of the project
     */
-    public entry fun launch_project(
+    public entry fun launch_project<CoinType>(
             sender: &signer,
             id: u64,
             owner: address,
@@ -160,7 +160,6 @@ module Thundind::ThundindCoin {
             description: String,
             token_distribution: String, // a brief introduction for token distribution
             initial_market_cap_at_tge: String,
-            coin_info: String,  // to describe the coin info, as: `0x1::FakeCoin::Coin`
             total_presell_amount: u64,
             claimable_time: u64,
             wl_amount: u64, wl_price: u64, wl_start: u64, wl_end: u64, wl_limit: u64, // white list params
@@ -174,6 +173,8 @@ module Thundind::ThundindCoin {
             total_presell_amount == wl_amount + pv_amount + pb_amount,
             error::invalid_argument(ETHUNDIND_PROJECT_AMOUNT_OVER_BOUND)
         );
+
+        let coin_info = type_info::type_name<CoinType>();
 
         let prj = Project {
             id,
@@ -521,7 +522,7 @@ module Thundind::ThundindCoin {
         t_init_system(m_owner);
 
         let p_owner = signer::address_of(prj_owner);
-        launch_project(
+        launch_project<FakeMoney>(
             m_owner,
             1001,
             p_owner,
@@ -529,7 +530,6 @@ module Thundind::ThundindCoin {
             string::utf8(b"this is a test case of launch project"),
             string::utf8(b"20% for sell, 80% for dev"),
             string::utf8(b"45% TGE for 2 weeks"),
-            string::utf8(b"0xcaf0::ThundindCoin::FakeMoney"),
             1200,
             700, // claimable time
             400, 10, 100, 200, 20,// white list params
