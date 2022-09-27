@@ -28,7 +28,8 @@ module Thundind::ThundindCoin {
     const ETHUNDIND_PROJECT_PROGRESS_NOT_EXIST: u64 = 10;
     const ETHUNDIND_PROJECT_NOT_WHITE_LIST: u64     = 11;
     const ETHUNDIND_NOT_CLAIMABLE: u64              = 12;
-    const ETHUNDIND_NOT_BOUGHT: u64              = 13;
+    const ETHUNDIND_NOT_BOUGHT: u64                 = 13;
+    const ETHUNDIND_PROJECT_HAS_STARTED: u64        = 14;
 
     const MAX_U128: u128 = 340282366920938463463374607431768211455;
 
@@ -48,8 +49,7 @@ module Thundind::ThundindCoin {
     const STAGE_PUBLIC_SELL: u8 = 3;
 
     struct PrjLaunchEvent has drop, store {
-        id: u64,
-        amount: u64,
+        prj_id: u64,
     }
 
     struct PrjBuyEvent has drop, store {
@@ -58,7 +58,7 @@ module Thundind::ThundindCoin {
         price: u64,
     }
 
-    struct Stage has store {
+    struct Stage has store, drop {
         selling_amount: u64,     // want sell amount
         sold_amount: u64,     // real sold amount
         price: u64,           // 1 Token for xx Aptos
@@ -154,7 +154,7 @@ module Thundind::ThundindCoin {
     */
     public entry fun launch_project<CoinType>(
             sender: &signer,
-            id: u64,
+            prj_id: u64,
             owner: address,
             name: String,
             description: String,
@@ -176,34 +176,58 @@ module Thundind::ThundindCoin {
 
         let coin_info = type_info::type_name<CoinType>();
 
-        let prj = Project {
-            id,
-            owner,
-            name,
-            description,
-            token_distribution,
-            initial_market_cap_at_tge,
-            coin_info,
-            total_presell_amount,
-            claimable_time,
-
-            white_list_stage:   make_stage(wl_amount, wl_price, wl_start, wl_end, wl_limit),     // white list progress
-            private_sell_stage: make_stage(pv_amount, pv_price, pv_start, pv_end, pv_limit),     // private sell progress
-            public_sell_stage:  make_stage(pb_amount, pb_price, pb_start, pb_end, pb_limit),     // public sell progress
-
-            white_list: vector::empty(),        // white list
-            buyer_list: table::new(),        // all buyers
-
-            buy_events: account::new_event_handle<PrjBuyEvent>(sender),
-        };
-
         let allPrjs = borrow_global_mut<AllProjects>(@Thundind);
 
-        table::add(&mut allPrjs.projects, id, prj);
+        if (table::contains(&allPrjs.projects, prj_id)) {
+            let prj = table::borrow_mut(&mut allPrjs.projects, prj_id);
+            let now = timestamp::now_seconds();
+            assert!(
+                now < prj.white_list_stage.start_time ||
+                now < prj.private_sell_stage.start_time ||
+                now < prj.public_sell_stage.start_time,
+                error::invalid_argument(ETHUNDIND_PROJECT_HAS_STARTED)
+            );
+
+            prj.id = prj_id;
+            prj.owner = owner;
+            prj.name = name;
+            prj.description = description;
+            prj.token_distribution = token_distribution;
+            prj.initial_market_cap_at_tge = initial_market_cap_at_tge;
+            prj.coin_info = coin_info;
+            prj.total_presell_amount = total_presell_amount;
+            prj.claimable_time = claimable_time;
+            prj.white_list_stage = make_stage(wl_amount, wl_price, wl_start, wl_end, wl_limit);
+            prj.private_sell_stage = make_stage(pv_amount, pv_price, pv_start, pv_end, pv_limit);
+            prj.public_sell_stage = make_stage(pb_amount, pb_price, pb_start, pb_end, pb_limit);
+        } else {
+            let new_prj = Project {
+                id: prj_id,
+                owner,
+                name,
+                description,
+                token_distribution,
+                initial_market_cap_at_tge,
+                coin_info,
+                total_presell_amount,
+                claimable_time,
+
+                white_list_stage:   make_stage(wl_amount, wl_price, wl_start, wl_end, wl_limit),     // white list progress
+                private_sell_stage: make_stage(pv_amount, pv_price, pv_start, pv_end, pv_limit),     // private sell progress
+                public_sell_stage:  make_stage(pb_amount, pb_price, pb_start, pb_end, pb_limit),     // public sell progress
+
+                white_list: vector::empty(),        // white list
+                buyer_list: table::new(),        // all buyers
+
+                buy_events: account::new_event_handle<PrjBuyEvent>(sender),
+            };
+
+            table::add(&mut allPrjs.projects, prj_id, new_prj);
+        };
 
         event::emit_event<PrjLaunchEvent>(
             &mut allPrjs.launch_events,
-            PrjLaunchEvent { id, amount: total_presell_amount },
+            PrjLaunchEvent { prj_id },
         );
     }
 
@@ -324,15 +348,15 @@ module Thundind::ThundindCoin {
         let in_stage: u8 = 0;
         let stage: &mut Stage;
 
-        if (prj.private_sell_stage.start_time <= now && now < prj.private_sell_stage.end_time) {
+        if (prj.white_list_stage.start_time <= now && now < prj.white_list_stage.end_time) {
+            stage = &mut prj.white_list_stage;
+            in_stage = STAGE_WHITE_LIST;
+        } else if (prj.private_sell_stage.start_time <= now && now < prj.private_sell_stage.end_time) {
             stage = &mut prj.private_sell_stage;
             in_stage = STAGE_PRIVATE_SELL;
         } else if (prj.public_sell_stage.start_time <= now && now < prj.public_sell_stage.end_time) {
             stage = &mut prj.public_sell_stage;
             in_stage = STAGE_PUBLIC_SELL;
-        } else if (prj.white_list_stage.start_time <= now && now < prj.white_list_stage.end_time) {
-            stage = &mut prj.white_list_stage;
-            in_stage = STAGE_WHITE_LIST;
         } else {
             assert!(
                 false,
