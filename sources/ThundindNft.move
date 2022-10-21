@@ -31,8 +31,7 @@ module Thundind::ThundindNft {
     const STAGE_PUBLIC_SELL: u8 = 3;
 
     struct PrjLaunchEvent has drop, store {
-        id: u64,
-        amount: u64,
+        prj_id: u64,
     }
 
     struct PrjBuyEvent has drop, store {
@@ -42,7 +41,7 @@ module Thundind::ThundindNft {
     }
 
     struct Stage has store {
-        sell_amount: u64,     // want sell amount
+        selling_amount: u64,     // want sell amount
         sold_amount: u64,     // real sold amount
         price: u64,           // 1 Token for xx Aptos
         start_time: u64,      // progress start time
@@ -91,7 +90,7 @@ module Thundind::ThundindNft {
 
     fun make_stage(amount: u64, price: u64, start: u64, end: u64, limit: u64): Stage {
         Stage {
-            sell_amount: amount,
+            selling_amount: amount,
             sold_amount: 0,
             price,
             start_time: start,
@@ -163,7 +162,7 @@ module Thundind::ThundindNft {
 
         event::emit_event<PrjLaunchEvent>(
             &mut allPrjs.launch_events,
-            PrjLaunchEvent { id, amount: total_presell_amount },
+            PrjLaunchEvent { prj_id: id },
         );
     }
 
@@ -223,7 +222,7 @@ module Thundind::ThundindNft {
         };
 
         assert!(
-            stage.sold_amount + amount <= stage.sell_amount,
+            stage.sold_amount + amount <= stage.selling_amount,
             error::invalid_argument(ETHUNDIND_PROJECT_AMOUNT_OVER_BOUND)
         );
 
