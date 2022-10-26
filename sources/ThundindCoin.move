@@ -30,6 +30,7 @@ module Thundind::ThundindCoin {
     const ETHUNDIND_NOT_CLAIMABLE: u64              = 12;
     const ETHUNDIND_NOT_BOUGHT: u64                 = 13;
     const ETHUNDIND_PROJECT_HAS_STARTED: u64        = 14;
+    const ETHUNDIND_OVER_BUYABLE_AMOUNT: u64        = 15;
 
     const MAX_U128: u128 = 340282366920938463463374607431768211455;
 
@@ -341,7 +342,7 @@ module Thundind::ThundindCoin {
         sender: &signer,
         prj: &mut Project,
         amount: u64
-    ): u8
+    ): (u8, u64)
         acquires ProjectEscrowedCoin, BuyerEscrowedCoin
     {
         let now = timestamp::now_seconds();
@@ -384,7 +385,7 @@ module Thundind::ThundindCoin {
             }
         );
 
-        in_stage
+        (in_stage, stage.limit_per_account)
     }
 
     // user buy coin
@@ -407,7 +408,7 @@ module Thundind::ThundindCoin {
             error::invalid_argument(ETHUNDIND_PROJECT_COINTYPE_MISMATCH),
         );
 
-        let in_stage = do_buy_coin_with_aptos<CoinType>(sender, prj, amount);
+        let (in_stage, limit) = do_buy_coin_with_aptos<CoinType>(sender, prj, amount);
 
         let buyer = signer::address_of(sender);
         if (in_stage == STAGE_WHITE_LIST) {
@@ -417,15 +418,29 @@ module Thundind::ThundindCoin {
             );
         };
 
+        assert!(
+                amount <= limit,
+                error::invalid_argument(ETHUNDIND_OVER_BUYABLE_AMOUNT)
+        );
+
         if (table::contains(&prj.buyer_list, buyer)) {
             let record = table::borrow_mut(&mut prj.buyer_list, buyer);
+            let total_bought: u64;
             if (in_stage == STAGE_PRIVATE_SELL) {
                 record.pv_amount = record.pv_amount + amount;
+                total_bought = record.pv_amount;
             } else if (in_stage == STAGE_PUBLIC_SELL) {
                 record.pb_amount = record.pb_amount + amount;
+                total_bought = record.pb_amount;
             } else {
                 record.wl_amount = record.wl_amount + amount;
-            }
+                total_bought = record.wl_amount;
+            };
+
+            assert!(
+                total_bought <= limit,
+                error::invalid_argument(ETHUNDIND_OVER_BUYABLE_AMOUNT)
+            );
         } else {
             let record = BoughtRecord {
                 pv_amount:  if (in_stage == STAGE_PRIVATE_SELL) amount else 0,
@@ -679,5 +694,39 @@ module Thundind::ThundindCoin {
         timestamp::fast_forward_seconds(1000);
 
         buy_coin<FakeMoney>(player, 1001, FM_DECIMALS * 10);  // 10 FM
+    }
+
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC0)]
+    #[expected_failure]
+    public fun t_buy_coin_over_limit(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
+        acquires AllProjects, ProjectEscrowedCoin, BuyerEscrowedCoin
+    {
+        t_add_white_list(prj_owner, m_owner);
+        mint_aptos_coin(aptos_framework, player, 1000000000000); // 10000 APT
+
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+        // to white list stage
+        timestamp::fast_forward_seconds(150);
+
+        buy_coin<FakeMoney>(player, 1001, FM_DECIMALS * 21);  // 21 FM
+    }
+
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC0)]
+    #[expected_failure]
+    public fun t_buy_coin_over_limit_by_accumulative(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
+        acquires AllProjects, ProjectEscrowedCoin, BuyerEscrowedCoin
+    {
+        t_add_white_list(prj_owner, m_owner);
+        mint_aptos_coin(aptos_framework, player, 1000000000000); // 10000 APT
+
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+        // to white list stage
+        timestamp::fast_forward_seconds(150);
+
+        buy_coin<FakeMoney>(player, 1001, FM_DECIMALS * 10);  // 21 FM
+
+        timestamp::fast_forward_seconds(10);
+
+         buy_coin<FakeMoney>(player, 1001, FM_DECIMALS * 15);
     }
 }

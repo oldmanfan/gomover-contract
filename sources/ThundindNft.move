@@ -25,6 +25,7 @@ module Thundind::ThundindNft {
     const ETHUNDIND_PROJECT_PROGRESS_TIME_OVER: u64 = 9;
     const ETHUNDIND_PROJECT_PROGRESS_NOT_EXIST: u64 = 10;
     const ETHUNDIND_PROJECT_NOT_WHITE_LIST: u64     = 11;
+    const ETHUNDIND_OVER_BUYABLE_AMOUNT: u64        = 12;
 
     const STAGE_WHITE_LIST: u8 = 1;
     const STAGE_PRIVATE_SELL: u8 = 2;
@@ -197,7 +198,7 @@ module Thundind::ThundindNft {
         sender: &signer,
         prj: &mut NftProject,
         amount: u64
-    ): u8
+    ): (u8, u64)
     {
         let now = timestamp::now_seconds();
         let in_stage: u8 = 0;
@@ -240,7 +241,7 @@ module Thundind::ThundindNft {
             }
         );
 
-        in_stage
+        (in_stage, stage.limit_per_account)
     }
 
     // user buy with white list
@@ -259,7 +260,7 @@ module Thundind::ThundindNft {
         );
 
         let prj = table::borrow_mut(&mut allPrjs.projects, prj_id);
-        let in_stage = do_exchange_nft_aptos(sender, prj, amount);
+        let (in_stage, limit) = do_exchange_nft_aptos(sender, prj, amount);
         let buyer = signer::address_of(sender);
         if (in_stage == STAGE_WHITE_LIST) {
             assert!(
@@ -268,15 +269,29 @@ module Thundind::ThundindNft {
             );
         };
 
+        assert!(
+                amount <= limit,
+                error::invalid_argument(ETHUNDIND_OVER_BUYABLE_AMOUNT)
+        );
+
         if (table::contains(&prj.buyer_list, buyer)) {
             let record = table::borrow_mut(&mut prj.buyer_list, buyer);
+            let total_bought: u64;
             if (in_stage == STAGE_PRIVATE_SELL) {
                 record.pv_amount = record.pv_amount + amount;
+                total_bought = record.pv_amount;
             } else if (in_stage == STAGE_PUBLIC_SELL) {
                 record.pb_amount = record.pb_amount + amount;
+                total_bought = record.pb_amount;
             } else {
                 record.wl_amount = record.wl_amount + amount;
-            }
+                total_bought = record.wl_amount;
+            };
+
+            assert!(
+                total_bought <= limit,
+                error::invalid_argument(ETHUNDIND_OVER_BUYABLE_AMOUNT)
+            );
         } else {
             let record = BoughtRecord {
                 pv_amount:  if (in_stage == STAGE_PRIVATE_SELL) amount else 0,
@@ -418,4 +433,34 @@ module Thundind::ThundindNft {
        buy_nft(player, 1001, 10);
     }
 
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC0)]
+    #[expected_failure]
+    public fun t_buy_coin_over_limit(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
+        acquires AllProjects
+    {
+        t_add_white_list(prj_owner, m_owner);
+        mint_aptos_coin(aptos_framework, player, 1000000000000); // 10000 APT
+
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+        // to white list stage
+        timestamp::fast_forward_seconds(150);
+
+        buy_nft(player, 1001, 35);
+    }
+
+    #[test(aptos_framework = @0x1, prj_owner=@0xAABB1, m_owner = @Thundind, player = @0xBBCC0)]
+    #[expected_failure]
+    public fun t_buy_coin_over_limit_accu(prj_owner: &signer, m_owner: &signer, aptos_framework: &signer, player: &signer)
+        acquires AllProjects
+    {
+        t_add_white_list(prj_owner, m_owner);
+        mint_aptos_coin(aptos_framework, player, 1000000000000); // 10000 APT
+
+        timestamp::set_time_has_started_for_testing(aptos_framework);
+        // to white list stage
+        timestamp::fast_forward_seconds(150);
+
+        buy_nft(player, 1001, 25);
+        buy_nft(player, 1001, 15);
+    }
 }
